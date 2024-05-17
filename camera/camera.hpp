@@ -28,19 +28,33 @@ class Device;
 
 using FnProcessImage = std::function<void(int h, int w, int c, unsigned char* data)>;
 
-namespace detail {
+enum ParamFlag {
+    Param_Auto = 0x01,
+    Param_Manual = 0x02
+};
 
-template <typename T>
-inline void objectRelease(T **ppObj)
-{
-    if (*ppObj) {
-        (*ppObj)->Release();
-        *ppObj = nullptr;
-    }
-    return;
-}
+struct ParamValue {
+    long value;
+    long step;
+    long defaultValue;
+    long minValue;
+    long maxValue;
+    long flag;
+};
 
-}
+struct Params {
+    ParamValue brightness;
+    ParamValue contrast;
+    ParamValue hue;
+    ParamValue saturation;
+    ParamValue sharpness;
+    ParamValue gamma;
+    ParamValue whiteBalance;
+    ParamValue backlightCompensation;
+    ParamValue gain;
+    ParamValue exposure;
+    ParamValue focus;
+};
 
 struct ImageFormat {
     int pixelFormat;
@@ -91,6 +105,18 @@ static const ImageFormat g_imageFormatTable[] = {
     {PixelFormat_IMC4,   "IMC4",   MEDIASUBTYPE_IMC4}
 };
 
+namespace detail {
+
+template <typename T>
+inline void objectRelease(T **ppObj)
+{
+    if (*ppObj) {
+        (*ppObj)->Release();
+        *ppObj = nullptr;
+    }
+    return;
+}
+
 inline int parsePixelFormat(const GUID &guid)
 {
     int pixelFormat = 0;
@@ -103,6 +129,7 @@ inline int parsePixelFormat(const GUID &guid)
     return pixelFormat;
 }
 
+}
 // {C1F400A0-3F08-11D3-9F0B-006008039E37}
 DEFINE_GUID(CLSID_SampleGrabber,
 0xC1F400A0, 0x3F08, 0x11D3, 0x9F, 0x0B, 0x00, 0x60, 0x08, 0x03, 0x9E, 0x37); //qedit.dll
@@ -203,14 +230,15 @@ public:
         STATE_PROCESS,
         STATE_TERMINATE
     };
-
+    static constexpr int max_image_block = 4;
 private:
     int width;
     int height;
     int pixelFormat;
     int state;
+    int index;
     Buffer rawBuffer;
-    Buffer image;
+    Buffer imageBlocks[max_image_block];
     std::condition_variable condit;
     std::mutex mutex;
     std::thread processThread;
@@ -237,6 +265,8 @@ protected:
             } else if (pixelFormat == PixelFormat_YUY2) {
                 len = width * height * 4;
             }
+            Buffer& image = imageBlocks[index];
+            index = (index + 1)%max_image_block;
             image.allocate(len);
             /* decode */
             if (pixelFormat == PixelFormat_MJPG) {
@@ -249,6 +279,8 @@ protected:
                         image.data, width * 4,
                         width, height);
                 processImage(height, width, 4, image.data);
+            } else {
+                std::cout<<"unresolve format:"<<pixelFormat<<std::endl;
             }
             /* get next image */
             if (state != STATE_TERMINATE) {
@@ -260,7 +292,7 @@ protected:
     }
 public:
     SampleGrabberCB(const FnProcessImage &func)
-        :processImage(func), width(0), height(0), pixelFormat(0), state(STATE_NONE){}
+        :processImage(func), width(0), height(0), pixelFormat(0), state(STATE_NONE), index(0){}
     virtual ~SampleGrabberCB(){}
 
     virtual HRESULT STDMETHODCALLTYPE SampleCB(double time, IMediaSample* sample)
@@ -275,9 +307,7 @@ public:
 
         if (state == STATE_PREPEND) {
             std::unique_lock<std::mutex> locker(mutex);
-            if (rawBuffer.capacity < len) {
-                rawBuffer.allocate(len);
-            }
+            rawBuffer.allocate(len);
             memcpy(rawBuffer.data, buffer, len);
             rawBuffer.dataSize = len;
             state = STATE_FRAME_READY;
@@ -298,6 +328,7 @@ public:
 
     void setProperty(int w, int h, int format)
     {
+        std::unique_lock<std::mutex> locker(mutex);
         width = w;
         height = h;
         pixelFormat = format;
@@ -469,7 +500,7 @@ private:
     SampleGrabberCB* sampleGrabberCB;
     bool m_readyForCapture;
     int m_activeDeviceNum;
-    std::vector<std::shared_ptr<Device>> deviceList;
+    std::vector<std::shared_ptr<Device> > deviceList;
 private:
     std::wstring createUniqueName(const std::wstring& name, int id)
     {
@@ -980,7 +1011,7 @@ public:
             return false;
         }
         Device::Property &property = deviceList[m_activeDeviceNum]->currentProperty;
-        sampleGrabberCB->setProperty(property.width, property.height, parsePixelFormat(property.pixelFormat));
+        sampleGrabberCB->setProperty(property.width, property.height, detail::parsePixelFormat(property.pixelFormat));
         sampleGrabberCB->start();
         return deviceList[m_activeDeviceNum]->start();
     }
@@ -1209,6 +1240,126 @@ public:
     int getGain(long &value, long &flag)
     {
         return getProcParam(VideoProcAmp_Gain, value, flag);
+    }
+
+    void setParams(const Params &params)
+    {
+        /* brightness */
+        setBrightness(params.brightness.value, params.brightness.flag);
+        /* contrast */
+        setContrast(params.contrast.value, params.contrast.flag);
+        /* hue */
+        setHue(params.hue.value, params.hue.flag);
+        /* saturation */
+        setSaturation(params.saturation.value, params.saturation.flag);
+        /* sharpness */
+        setSharpness(params.sharpness.value, params.sharpness.flag);
+        /* gamma */
+        setGamma(params.gamma.value, params.gamma.flag);
+        /* whiteBalance */
+        setWhiteBalance(params.whiteBalance.value, params.whiteBalance.flag);
+        /* backlightCompensation */
+        setBacklightCompensation(params.backlightCompensation.value, params.backlightCompensation.flag);
+        /* gain */
+        setGain(params.gain.value, params.gain.flag);
+        /* exposure */
+        setExposure(params.exposure.value, params.exposure.flag);
+        /* focus */
+        setFocus(params.focus.value, params.focus.flag);
+        return;
+    }
+
+    void getParams(Params &params)
+    {
+        /* brightness */
+        getProcParamRange(VideoProcAmp_Brightness,
+                          params.brightness.minValue,
+                          params.brightness.maxValue,
+                          params.brightness.step,
+                          params.brightness.defaultValue,
+                          params.brightness.flag);
+        getBrightness(params.brightness.value, params.brightness.flag);
+        /* contrast */
+        getProcParamRange(VideoProcAmp_Contrast,
+                          params.contrast.minValue,
+                          params.contrast.maxValue,
+                          params.contrast.step,
+                          params.contrast.defaultValue,
+                          params.contrast.flag);
+        getContrast(params.contrast.value, params.contrast.flag);
+        /* hue */
+        getProcParamRange(VideoProcAmp_Hue,
+                          params.hue.minValue,
+                          params.hue.maxValue,
+                          params.hue.step,
+                          params.hue.defaultValue,
+                          params.hue.flag);
+        getHue(params.hue.value, params.hue.flag);
+        /* saturation */
+        getProcParamRange(VideoProcAmp_Saturation,
+                          params.saturation.minValue,
+                          params.saturation.maxValue,
+                          params.saturation.step,
+                          params.saturation.defaultValue,
+                          params.saturation.flag);
+        getSaturation(params.saturation.value, params.saturation.flag);
+        /* sharpness */
+        getProcParamRange(VideoProcAmp_Sharpness,
+                          params.sharpness.minValue,
+                          params.sharpness.maxValue,
+                          params.sharpness.step,
+                          params.sharpness.defaultValue,
+                          params.sharpness.flag);
+        getSharpness(params.sharpness.value, params.sharpness.flag);
+        /* gamma */
+        getProcParamRange(VideoProcAmp_Gamma,
+                          params.gamma.minValue,
+                          params.gamma.maxValue,
+                          params.gamma.step,
+                          params.gamma.defaultValue,
+                          params.gamma.flag);
+        getGamma(params.gamma.value, params.gamma.flag);
+        /* whiteBalance */
+        getProcParamRange(VideoProcAmp_WhiteBalance,
+                          params.whiteBalance.minValue,
+                          params.whiteBalance.maxValue,
+                          params.whiteBalance.step,
+                          params.whiteBalance.defaultValue,
+                          params.whiteBalance.flag);
+        getWhiteBalance(params.whiteBalance.value, params.whiteBalance.flag);
+        /* backlightCompensation */
+        getProcParamRange(VideoProcAmp_BacklightCompensation,
+                          params.backlightCompensation.minValue,
+                          params.backlightCompensation.maxValue,
+                          params.backlightCompensation.step,
+                          params.backlightCompensation.defaultValue,
+                          params.backlightCompensation.flag);
+        getBacklightCompensation(params.backlightCompensation.value, params.backlightCompensation.flag);
+        /* gain */
+        getProcParamRange(VideoProcAmp_Gain,
+                          params.gain.minValue,
+                          params.gain.maxValue,
+                          params.gain.step,
+                          params.gain.defaultValue,
+                          params.gain.flag);
+        getGain(params.gain.value, params.gain.flag);
+        /* exposure */
+        getControlParamRange(CameraControl_Exposure,
+                          params.exposure.minValue,
+                          params.exposure.maxValue,
+                          params.exposure.step,
+                          params.exposure.defaultValue,
+                          params.exposure.flag);
+        getExposure(params.exposure.value, params.exposure.flag);
+        /* focus */
+        getControlParamRange(CameraControl_Focus,
+                          params.focus.minValue,
+                          params.focus.maxValue,
+                          params.focus.step,
+                          params.focus.defaultValue,
+                          params.focus.flag);
+        getFocus(params.focus.value, params.focus.flag);
+        return;
     }
 };
 

@@ -37,6 +37,9 @@
        <widget class="QComboBox" name="resolutionComboBox"/>
       </item>
       <item>
+       <widget class="QComboBox" name="processComboBox"/>
+      </item>
+      <item>
        <widget class="QPushButton" name="startBtn">
         <property name="text">
          <string>start</string>
@@ -54,6 +57,13 @@
        <widget class="QPushButton" name="captureBtn">
         <property name="text">
          <string>capture</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="settingsBtn">
+        <property name="text">
+         <string>settings</string>
         </property>
        </widget>
       </item>

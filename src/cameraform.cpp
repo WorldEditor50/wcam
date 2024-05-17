@@ -1,16 +1,42 @@
 #include "cameraform.h"
 #include "ui_cameraform.h"
+#include <QApplication>
+#include <QDateTime>
+#include <QDesktopServices>
+#include "improcess/improcess.h"
+#include "settingsdialog.h"
 
 CameraForm::CameraForm(QWidget *parent) :
     QWidget(parent),
+    isReadyForCapture(false),
+    processMethod(imp::Method_None),
     ui(new Ui::CameraForm),
     cameraManager(nullptr)
 {
     ui->setupUi(this);
+
     connect(this, &CameraForm::sendImage,
             this, &CameraForm::updateImage, Qt::QueuedConnection);
-    connect(ui->startBtn, &QPushButton::released, this, &CameraForm::startCapture);
-    connect(ui->stopBtn, &QPushButton::released, this, &CameraForm::stopCapture);
+    connect(ui->startBtn, &QPushButton::clicked, this, &CameraForm::startCapture);
+    connect(ui->stopBtn, &QPushButton::clicked, this, &CameraForm::stopCapture);
+    connect(ui->captureBtn, &QPushButton::clicked, this, [=](){
+        if (!isReadyForCapture) {
+            isReadyForCapture = true;
+        }
+    });
+    connect(ui->settingsBtn, &QPushButton::clicked, this, [=](){
+        SettingsDialog settings(cameraManager, this);
+        settings.exec();
+    });
+    ui->processComboBox->addItems(QStringList{"none", "filter"});
+    connect(ui->processComboBox, &QComboBox::currentTextChanged, this, [=](const QString &method){
+        if (method == "none") {
+            processMethod = imp::Method_None;
+        } else if (method == "filter") {
+            processMethod = imp::Method_Filter;
+        }
+    });
+
     /* HOTPLUG */
     hotplug.registerDevice(UUID_CAMERA);
     hotplug.registerNotify([=](int notifyFlag, unsigned short vid, unsigned short pid){
@@ -37,6 +63,13 @@ CameraForm::~CameraForm()
 
 void CameraForm::updateImage(const QImage &img)
 {
+    if (isReadyForCapture) {
+        isReadyForCapture = false;
+        QString fileName = QString("%1/%2.jpg")
+                .arg(qApp->applicationDirPath()).arg(QDateTime::currentDateTime().toString("yyyyMMddhhmmss"));
+        img.save(fileName);
+        QDesktopServices::openUrl(QUrl(fileName));
+    }
     ui->imageLabel->setPixmap(QPixmap::fromImage(img.scaled(ui->imageLabel->size())));
     return;
 }
@@ -54,18 +87,21 @@ void CameraForm::onAddDevice()
 
     cameraManager = new Camera::Manager([this](int h, int w, int c, unsigned char* data){
         if (c == 3) {
-            QImage img(data, w, h, QImage::Format_RGB888);
-            emit sendImage(img);
+            if (processMethod == imp::Method_None) {
+                emit sendImage(QImage(data, w, h, QImage::Format_RGB888));
+            } else if (processMethod == imp::Method_Filter) {
+                cv::Mat img(h, w, CV_8UC3, data);
+                imp::filter(img, out);
+                emit sendImage(QImage(out.data, out.cols, out.rows, QImage::Format_RGB888));
+            }
         } else if (c == 4){
-            QImage img(data, w, h, QImage::Format_ARGB32);
-            emit sendImage(img);
+            emit sendImage(QImage(data, w, h, QImage::Format_ARGB32));
         }
     });
     std::vector<std::wstring> devList = cameraManager->getDeviceList();
     for (std::wstring& dev: devList) {
         ui->devComboBox->addItem(QString::fromWCharArray(dev.c_str()));
     }
-
     std::vector<std::string> resList = cameraManager->getResolutionList();
     for (std::string& res: resList) {
         ui->resolutionComboBox->addItem(QString::fromStdString(res));
@@ -99,17 +135,17 @@ void CameraForm::onRemoveDevice()
 
 void CameraForm::onResolutionChanged(int resolutionNum)
 {
-    bool wasCapturing = m_isCapturing;
+    bool wasStreaming = isStreaming;
     stopCapture();
     cameraManager->onResolutionChanged(resolutionNum);
-    if (wasCapturing) {
+    if (wasStreaming) {
         startCapture();
     }
 }
 
 void CameraForm::onDeviceChanged(int deviceNum)
 {
-    bool wasCapturing = m_isCapturing;
+    bool wasStreaming = isStreaming;
     stopCapture();
 
     cameraManager->onDeviceChanged(deviceNum);
@@ -120,7 +156,7 @@ void CameraForm::onDeviceChanged(int deviceNum)
         ui->resolutionComboBox->addItem(QString::fromStdString(res));
     }
 
-    if (wasCapturing) {
+    if (wasStreaming) {
         startCapture();
     }
     return;
@@ -132,7 +168,7 @@ void CameraForm::startCapture()
     ui->stopBtn->setEnabled(true);
 
     if (cameraManager->startCapture()) {
-        m_isCapturing = true;
+        isStreaming = true;
     }
     return;
 }
@@ -142,7 +178,7 @@ void CameraForm::stopCapture()
     ui->startBtn->setEnabled(true);
     ui->stopBtn->setEnabled(false);
     if (cameraManager->stopCapture()) {
-        m_isCapturing = false;
+        isStreaming = false;
     }
     return;
 }

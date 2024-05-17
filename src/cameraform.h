@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <camera/camera.hpp>
 #include <camera/usbhotplug.h>
+#include <opencv2/core.hpp>
 
 namespace Ui {
 class CameraForm;
@@ -32,7 +33,10 @@ public slots:
 protected:
     void closeEvent(QCloseEvent *ev) override;
 private:
-    bool m_isCapturing;
+    bool isStreaming;
+    bool isReadyForCapture;
+    int processMethod;
+    cv::Mat out;
     UsbHotplug hotplug;
     Ui::CameraForm *ui;
     Camera::Manager *cameraManager;
