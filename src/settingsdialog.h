@@ -22,27 +22,27 @@ public:
     bool loadParams(const QString &fileName);
 public slots:
     /* brightness */
-    void onBrightnessChanged(int value, int isAuto);
+    void onBrightnessChanged(int value, int flag);
     /* contrast */
-    void onContrastChanged(int value, int isAuto);
+    void onContrastChanged(int value, int flag);
     /* hue */
-    void onHueChanged(int value, int isAuto);
+    void onHueChanged(int value, int flag);
     /* saturation */
-    void onSaturationChanged(int value, int isAuto);
+    void onSaturationChanged(int value, int flag);
     /* sharpness */
-    void onSharpnessChanged(int value, int isAuto);
+    void onSharpnessChanged(int value, int flag);
     /* gamma */
-    void onGammaChanged(int value, int isAuto);
+    void onGammaChanged(int value, int flag);
     /* whiteBalance */
-    void onWhiteBalanceChanged(int value, int isAuto);
+    void onWhiteBalanceChanged(int value, int flag);
     /* backlightCompensation */
-    void onBacklightCompensationChanged(int value, int isAuto);
+    void onBacklightCompensationChanged(int value, int flag);
     /* gain */
-    void onGainChanged(int value, int isAuto);
+    void onGainChanged(int value, int flag);
     /* exposure */
-    void onExposureChanged(int value, int isAuto);
+    void onExposureChanged(int value, int flag);
     /* focus */
-    void onFocusChanged(int value, int isAuto);
+    void onFocusChanged(int value, int flag);
 private:
     Ui::SettingsDialog *ui;
     Camera::Manager *cameraManager;
