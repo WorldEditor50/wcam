@@ -4,6 +4,7 @@
 #include <rpc.h>
 #include <rpcndr.h>
 #include <dshow.h>
+#include <ObjIdl.h>
 #include <strmif.h>
 #include <iostream>
 #include <string>
@@ -291,8 +292,7 @@ protected:
         return;
     }
 public:
-    SampleGrabberCB(const FnProcessImage &func)
-        :processImage(func), width(0), height(0), pixelFormat(0), state(STATE_NONE), index(0){}
+    SampleGrabberCB():width(0), height(0), pixelFormat(0), state(STATE_NONE), index(0){}
     virtual ~SampleGrabberCB(){}
 
     virtual HRESULT STDMETHODCALLTYPE SampleCB(double time, IMediaSample* sample)
@@ -325,6 +325,8 @@ public:
     }
     virtual ULONG STDMETHODCALLTYPE AddRef() { return 1;}
     virtual ULONG STDMETHODCALLTYPE Release() { return 1;}
+
+    void registerProcess(const FnProcessImage &func) { processImage = func; }
 
     void setProperty(int w, int h, int format)
     {
@@ -362,65 +364,79 @@ public:
     }
 };
 
-class Device
+struct Property {
+    int id;
+    std::wstring vendorID;
+    std::wstring productID;
+    std::wstring friendlyName;
+    std::wstring filterName;
+};
+
+class Device : public Property
 {
 public:
-    class Property
+    class Format
     {
     public:
-        AM_MEDIA_TYPE mediaType;
         LONG width;
         LONG height;
+        LONG isFlippedHorizontal;
+        LONG isFlippedVertical;
         GUID pixelFormat;
-        bool isFlippedHorizontal;
-        bool isFlippedVertical;
+        AM_MEDIA_TYPE mediaType;
     public:
-        Property(): mediaType(), width(0), height(0), pixelFormat(),
+        Format(): mediaType(), width(0), height(0), pixelFormat(),
             isFlippedHorizontal(false), isFlippedVertical(false) {}
     };
 
     friend class Manager;
-private:
-    int id;
+    using Ptr = std::shared_ptr<Device>;
+public:
     bool isActiveValue;
-    std::wstring friendlyName;
-    std::wstring filterName;
+    IMoniker* moniker;
     IBaseFilter* sourceFilter;
     IBaseFilter* sampleGrabberFilter;
     IBaseFilter* nullRenderer;
     ISampleGrabber* sampleGrabber;
+    SampleGrabberCB* sampleGrabberCB;
     IFilterGraph2* filterGraph;
     IAMStreamConfig* streamConfig;
-    Device::Property currentProperty;
-    std::vector<Device::Property> propertyList;
+    Device::Format currentFormat;
+    std::vector<Device::Format> formatList;
 public:
-    Device():
-        id(-1), isActiveValue(false), sourceFilter(nullptr),
-        sampleGrabberFilter(nullptr), nullRenderer(nullptr), sampleGrabber(nullptr),
+    Device():isActiveValue(false), moniker(nullptr), sourceFilter(nullptr),
+        sampleGrabberFilter(nullptr), nullRenderer(nullptr),
+        sampleGrabber(nullptr), sampleGrabberCB(new SampleGrabberCB),
         filterGraph(nullptr), streamConfig(nullptr){}
 
     ~Device()
     {
+
+        detail::objectRelease(&moniker);
         detail::objectRelease(&sourceFilter);
         detail::objectRelease(&sampleGrabberFilter);
         detail::objectRelease(&sampleGrabber);
         detail::objectRelease(&nullRenderer);
         detail::objectRelease(&streamConfig);
+        if (sampleGrabberCB) {
+            delete sampleGrabberCB;
+            sampleGrabberCB = nullptr;
+        }
     }
 
     int getId() const {return id;}
 
     std::wstring getFriendlyName() const {return friendlyName;}
 
-    const std::vector<Device::Property> &getPropertyList() const { return propertyList;}
+    const std::vector<Device::Format> &getFormatList() const { return formatList;}
 
-    const Device::Property &getCurrentProperty() const {return currentProperty;}
+    const Device::Format &getCurrentFormat() const {return currentFormat;}
 
-    bool setCurrentProperty(const Device::Property& properties)
+    bool setCurrentFormat(const Device::Format& format)
     {
-        currentProperty = properties;
+        currentFormat = format;
 
-        AM_MEDIA_TYPE mt = properties.mediaType;
+        AM_MEDIA_TYPE mt = format.mediaType;
         HRESULT hr = streamConfig->SetFormat(&mt);
         if (hr < 0) {
             return false;
@@ -428,13 +444,34 @@ public:
         return true;
     }
 
+    HRESULT registerSampleCB(const GUID &pixelFormat, const FnProcessImage &callbak)
+    {
+        HRESULT hr = S_FALSE;
+        // set the media type
+        AM_MEDIA_TYPE mt;
+        memset(&mt, 0, sizeof(AM_MEDIA_TYPE));
+        mt.majortype = MEDIATYPE_Video;
+        mt.subtype = pixelFormat;
+        hr = sampleGrabber->SetMediaType(&mt);
+        if (hr != S_OK) {
+            return hr;
+        }
+        sampleGrabberCB->registerProcess(callbak);
+        // add the callback to the samplegrabber, 0-->SampleCB, 1-->BufferCB
+        return sampleGrabber->SetCallback(sampleGrabberCB, 1);
+    }
+
     bool isActive() const {return isActiveValue; }
 
     bool start()
     {
-        if (propertyList.size() <= 0) {
+        if (formatList.empty()) {
             return false;
         }
+        sampleGrabberCB->setProperty(currentFormat.width,
+                                     currentFormat.height,
+                                     detail::parsePixelFormat(currentFormat.pixelFormat));
+        sampleGrabberCB->start();
 
         HRESULT hr = S_FALSE;
         if (nullRenderer) {
@@ -465,6 +502,9 @@ public:
     {
         isActiveValue = false;
         HRESULT hr = S_FALSE;
+        if (sampleGrabberCB) {
+            sampleGrabberCB->stop();
+        }
 
         if (sourceFilter) {
             hr = sourceFilter->Stop();
@@ -491,26 +531,119 @@ public:
 
 };
 
+using DeviceList = std::vector<Device::Ptr>;
+
+inline std::wstring createUniqueName(const std::wstring& name, int id)
+{
+    std::stringstream stream;
+    stream << "id" << id;
+    std::string uniquePostfix = stream.str();
+    std::wstring newName = name + std::wstring(uniquePostfix.begin(), uniquePostfix.end());
+    return newName;
+}
+
+inline int enumerate(const std::wstring &vendorID, DeviceList &devList)
+{
+    HRESULT hr = S_FALSE;
+    VARIANT name;
+    std::wstring filterName;
+    ICreateDevEnum* devEnum = nullptr;
+    IEnumMoniker* enumMoniker = nullptr;
+    IMoniker* moniker = nullptr;
+    IPropertyBag* pbag = nullptr;
+    // create an enumerator for video input devices
+    hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr,
+                          CLSCTX_INPROC_SERVER, IID_ICreateDevEnum,
+                          reinterpret_cast<void**>(&devEnum));
+    if (hr < 0 || !devEnum) {
+        return -1;
+    }
+    hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory,
+                                        &enumMoniker, NULL);
+    if (hr < 0 || !enumMoniker) {
+        return -1;
+    }
+    int devNum = 0;
+    while (enumMoniker->Next(1, &moniker, 0) == S_OK) {
+        ++devNum;
+        hr = moniker->BindToStorage(nullptr, nullptr, IID_IPropertyBag,
+                                    reinterpret_cast<void**>(&pbag));
+        if (hr < 0) {
+            moniker->Release();
+            continue;
+        }
+        VariantInit(&name);
+        hr = pbag->Read(L"Description", &name, 0);
+        if (hr < 0) {
+            hr = pbag->Read(L"FriendlyName", &name, 0);
+            if (hr < 0) {
+                VariantClear(&name);
+                pbag->Release();
+                moniker->Release();
+                continue;
+            }
+        }
+        WCHAR* wDisplayName = nullptr;
+        hr = moniker->GetDisplayName(nullptr, nullptr, &wDisplayName);
+        if (hr < 0) {
+            VariantClear(&name);
+            pbag->Release();
+            moniker->Release();
+            continue;
+        }
+        std::wcout<<L"Found Device:"<<wDisplayName<<std::endl;
+        std::wstring displayName(wDisplayName);
+        int pos = displayName.find(L"vid_");
+        std::wstring vid = displayName.substr(pos + 4, 4);
+        pos = displayName.find(L"pid_");
+        std::wstring pid = displayName.substr(pos + 4, 4);
+        std::wcout<<L"vid:"<<vid<<L", pid:"<<pid<<std::endl;
+        free(wDisplayName);
+        if (hr < 0) {
+            VariantClear(&name);
+            pbag->Release();
+            moniker->Release();
+            continue;
+        }
+
+        if (!vendorID.empty() && vendorID != vid) {
+            VariantClear(&name);
+            pbag->Release();
+            moniker->Release();
+            continue;
+        }
+
+        Device::Ptr dev(new Device);
+        dev->id = devNum;
+        std::wstring wname(name.bstrVal, SysStringLen(name.bstrVal));
+        dev->friendlyName = wname;
+        dev->filterName = createUniqueName(wname, devNum);
+        dev->vendorID = vid;
+        dev->productID = pid;
+        dev->moniker = moniker;
+        devList.push_back(dev);
+
+        VariantClear(&name);
+        pbag->Release();
+    }
+    enumMoniker->Release();
+    devEnum->Release();
+    return devNum;
+}
+
 class Manager
 {
 private:
     IFilterGraph2* filterGraph;
     ICaptureGraphBuilder2* captureGraph;
     IMediaControl* mediaControl;
-    SampleGrabberCB* sampleGrabberCB;
-    bool m_readyForCapture;
     int m_activeDeviceNum;
-    std::vector<std::shared_ptr<Device> > deviceList;
+    DeviceList devList;
 private:
-    std::wstring createUniqueName(const std::wstring& name, int id)
-    {
-        std::stringstream stream;
-        stream << "id" << id;
-        std::string uniquePostfix = stream.str();
-        std::wstring newName = name + std::wstring(uniquePostfix.begin(), uniquePostfix.end());
-        return newName;
-    }
-    bool initializeGraph()
+
+    static bool initializeGraph(IFilterGraph2* &filterGraph,
+                                ICaptureGraphBuilder2* &captureGraph,
+                                IMediaControl* &mediaControl)
     {
         HRESULT hr = S_FALSE;
         // create the FilterGraph
@@ -538,153 +671,75 @@ private:
         return true;
     }
 
-    bool initializeVideo()
+    static void initializeVideo(IFilterGraph2* filterGraph,
+                                ICaptureGraphBuilder2* captureGraph,
+                                FnProcessImage callback,
+                                DeviceList &devList)
     {
         HRESULT hr = S_FALSE;
-        VARIANT name;
-        std::wstring filterName;
-
-        ICreateDevEnum* devEnum = nullptr;
-        IEnumMoniker* enumMoniker = nullptr;
-        IMoniker* moniker = nullptr;
-        IPropertyBag* pbag = nullptr;
-
-        // create an enumerator for video input devices
-        hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr,
-                              CLSCTX_INPROC_SERVER, IID_ICreateDevEnum,
-                              reinterpret_cast<void**>(&devEnum));
-        if (hr < 0 || !devEnum) {
-            return false;
-        }
-
-        hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory,
-                                            &enumMoniker, NULL);
-        if (hr < 0 || !enumMoniker) {
-            return false;
-        }
-
-        int devNum = 0;
-        while (enumMoniker->Next(1, &moniker, 0) == S_OK) {
-            ++devNum;
-            hr = moniker->BindToStorage(nullptr, nullptr, IID_IPropertyBag,
-                                        reinterpret_cast<void**>(&pbag));
-            if (hr >= 0) {
-                VariantInit(&name);
-
-                hr = pbag->Read(L"Description", &name, 0);
-                if (hr < 0) {
-                    hr = pbag->Read(L"FriendlyName", &name, 0);
-                    if (hr < 0) {
-                        moniker->Release();
-                        continue;
-                    }
-                }
-
-                std::shared_ptr<Device> device(new Device);
-                device->id = devNum;
-                std::wstring wname(name.bstrVal, SysStringLen(name.bstrVal));
-                device->friendlyName = device->filterName = wname;
-                device->filterName = createUniqueName(device->filterName, device->id);
-
-                // add a filter for the device
-                hr = filterGraph->AddSourceFilterForMoniker(moniker, nullptr, device->filterName.c_str(),
-                                                        &device->sourceFilter);
-                if (hr != S_OK) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // create a samplegrabber filter for the device
-                hr = CoCreateInstance(CLSID_SampleGrabber, nullptr, CLSCTX_INPROC_SERVER,
-                                      IID_IBaseFilter, reinterpret_cast<void**>(&device->sampleGrabberFilter));
-                if (hr < 0) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // set mediatype on the samplegrabber
-                hr = device->sampleGrabberFilter->QueryInterface(IID_ISampleGrabber,
-                                                                   reinterpret_cast<void**>(&device->sampleGrabber));
-                if (hr != S_OK) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // set device capabilities
-                updateDeviceCapabilities(device.get());
-
-                filterName = L"SG" + device->filterName;
-                filterGraph->AddFilter(device->sampleGrabberFilter, filterName.c_str());
-
-                // set the media type
-                AM_MEDIA_TYPE mt;
-                memset(&mt, 0, sizeof(AM_MEDIA_TYPE));
-
-                mt.majortype = MEDIATYPE_Video;
-                mt.subtype = device->getCurrentProperty().pixelFormat;
-
-                hr = device->sampleGrabber->SetMediaType(&mt);
-                if (hr != S_OK) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // add the callback to the samplegrabber, 0-->SampleCB, 1-->BufferCB
-                hr = device->sampleGrabber->SetCallback(sampleGrabberCB, 1);
-                if (hr != S_OK) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // set the null renderer
-                hr = CoCreateInstance(CLSID_NullRenderer, nullptr, CLSCTX_INPROC_SERVER,
-                                      IID_IBaseFilter, reinterpret_cast<void**>(&device->nullRenderer));
-                if (hr < 0) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                filterName = L"NR" + device->filterName;
-                filterGraph->AddFilter(device->nullRenderer, filterName.c_str());
-
-                hr = captureGraph->RenderStream(&PIN_CATEGORY_PREVIEW, &MEDIATYPE_Video,
-                                             device->sourceFilter,
-                                             device->sampleGrabberFilter,
-                                             device->nullRenderer);
-                if (hr < 0) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // if the stream is started, start capturing immediatly
-                LONGLONG start = 0, stop = MAXLONGLONG;
-                hr = captureGraph->ControlStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                              device->sourceFilter, &start, &stop, 1, 2);
-                if (hr < 0) {
-                    pbag->Release();
-                    moniker->Release();
-                    continue;
-                }
-
-                // reference the graph
-                device->filterGraph = filterGraph;
-                deviceList.push_back(device);
-
-                VariantClear(&name);
-                pbag->Release();
+        for (int i = 0; i < devList.size(); i++) {
+            Device* dev = devList[i].get();
+            // add a filter for the device
+            hr = filterGraph->AddSourceFilterForMoniker(dev->moniker, nullptr, dev->filterName.c_str(),
+                                                        &dev->sourceFilter);
+            if (hr != S_OK) {
+                continue;
             }
-            moniker->Release();
+            // create a samplegrabber filter for the device
+            hr = CoCreateInstance(CLSID_SampleGrabber, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_IBaseFilter, reinterpret_cast<void**>(&dev->sampleGrabberFilter));
+            if (hr < 0) {
+                continue;
+            }
+
+            // set mediatype on the samplegrabber
+            hr = dev->sampleGrabberFilter->QueryInterface(IID_ISampleGrabber,
+                                                          reinterpret_cast<void**>(&dev->sampleGrabber));
+            if (hr != S_OK) {
+                continue;
+            }
+
+            // set device capabilities
+            updateDeviceCapabilities(captureGraph, dev);
+
+            std::wstring filterName = L"SG" + dev->filterName;
+            filterGraph->AddFilter(dev->sampleGrabberFilter, filterName.c_str());
+
+            // add the callback to the samplegrabber, 0-->SampleCB, 1-->BufferCB
+            hr = dev->registerSampleCB(dev->getCurrentFormat().pixelFormat, callback);
+            if (hr != S_OK) {
+                continue;
+            }
+
+            // set the null renderer
+            hr = CoCreateInstance(CLSID_NullRenderer, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_IBaseFilter, reinterpret_cast<void**>(&dev->nullRenderer));
+            if (hr < 0) {
+                continue;
+            }
+
+            filterName = L"NR" + dev->filterName;
+            filterGraph->AddFilter(dev->nullRenderer, filterName.c_str());
+
+            hr = captureGraph->RenderStream(&PIN_CATEGORY_PREVIEW, &MEDIATYPE_Video,
+                                            dev->sourceFilter,
+                                            dev->sampleGrabberFilter,
+                                            dev->nullRenderer);
+            if (hr < 0) {
+                continue;
+            }
+
+            // if the stream is started, start capturing immediatly
+            LONGLONG start = 0, stop = MAXLONGLONG;
+            hr = captureGraph->ControlStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
+                                             dev->sourceFilter, &start, &stop, 1, 2);
+            if (hr < 0) {
+                continue;
+            }
+            // reference the graph
+            dev->filterGraph = filterGraph;
         }
-        enumMoniker->Release();
-        devEnum->Release();
-        return true;
+        return;
     }
 
     void disconnectFilters(Device* device)
@@ -727,7 +782,7 @@ private:
         filterGraph->RemoveFilter(device->sourceFilter);
     }
 
-    bool checkMediaType(AM_MEDIA_TYPE* type)
+    static bool checkMediaType(AM_MEDIA_TYPE* type)
     {
         if (type->majortype != MEDIATYPE_Video ||
                 type->formattype != FORMAT_VideoInfo) {
@@ -753,19 +808,15 @@ private:
         return true;
     }
 
-    bool updateDeviceCapabilities(Device* device)
+    static bool updateDeviceCapabilities(ICaptureGraphBuilder2* captureGraph, Device* dev)
     {
-        if (!device) {
-            return false;
-        }
-
         HRESULT hr = S_FALSE;
         AM_MEDIA_TYPE* pmt = nullptr;
         VIDEO_STREAM_CONFIG_CAPS scc;
         IAMStreamConfig* pConfig = nullptr;
 
         hr = captureGraph->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                      device->sourceFilter, IID_IAMStreamConfig,
+                                      dev->sourceFilter, IID_IAMStreamConfig,
                                       reinterpret_cast<void**>(&pConfig));
         if (hr < 0) {
             return false;
@@ -779,10 +830,10 @@ private:
             return false;
         }
 
-        if (device->streamConfig) {
-            device->streamConfig->Release();
+        if (dev->streamConfig) {
+            dev->streamConfig->Release();
         }
-        device->streamConfig = pConfig;
+        dev->streamConfig = pConfig;
 
         for (int i = 0; i < iCount; ++i) {
             hr = pConfig->GetStreamCaps(i, &pmt, reinterpret_cast<BYTE*>(&scc));
@@ -794,23 +845,23 @@ private:
                 continue;
             }
 
-            Device::Property property;
+            Device::Format format;
             VIDEOINFOHEADER* pvi = reinterpret_cast<VIDEOINFOHEADER*>(pmt->pbFormat);
-            property.mediaType = *pmt;
-            property.width = pvi->bmiHeader.biWidth;
-            property.height = pvi->bmiHeader.biHeight;
-            property.pixelFormat = pmt->subtype;
+            format.mediaType = *pmt;
+            format.width = pvi->bmiHeader.biWidth;
+            format.height = pvi->bmiHeader.biHeight;
+            format.pixelFormat = pmt->subtype;
 
             IAMVideoControl* pVideoControl = nullptr;
             hr = captureGraph->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                          device->sourceFilter, IID_IAMVideoControl,
+                                          dev->sourceFilter, IID_IAMVideoControl,
                                           reinterpret_cast<void**>(&pVideoControl));
             if (hr < 0) {
                 continue;
             }
 
             IPin* pPin = nullptr;
-            hr = getPin(device->sourceFilter, PINDIR_OUTPUT, &pPin);
+            hr = getPin(dev->sourceFilter, PINDIR_OUTPUT, &pPin);
             if (hr < 0) {
                 continue;
             }
@@ -831,17 +882,17 @@ private:
                 continue;
             }
 
-            property.isFlippedHorizontal = mode & VideoControlFlag_FlipHorizontal;
-            property.isFlippedVertical = (mode & VideoControlFlag_FlipVertical) >> 1;
+            format.isFlippedHorizontal = mode & VideoControlFlag_FlipHorizontal;
+            format.isFlippedVertical = (mode & VideoControlFlag_FlipVertical) >> 1;
 
-            device->propertyList.push_back(property);
+            dev->formatList.push_back(format);
 
             pPin->Release();
             pVideoControl->Release();
         }
 
-        if (!device->propertyList.empty()) {
-            device->currentProperty = *device->propertyList.begin();
+        if (!dev->formatList.empty()) {
+            dev->currentFormat = *dev->formatList.begin();
         }
         return true;
     }
@@ -852,20 +903,17 @@ private:
         if (hr < 0) {
             return false;
         }
-        m_readyForCapture = true;
-
-        for (auto& device : deviceList) {
-            device->stop();
+        for (auto& dev : devList) {
+            dev->stop();
         }
         return true;
     }
 
     bool stopControl()
     {
-        for (auto& device: deviceList) {
-            device->stop();
+        for (auto& dev: devList) {
+            dev->stop();
         }
-        m_readyForCapture = false;
         HRESULT hr = mediaControl->Stop();
         if (hr < 0) {
             return false;
@@ -899,44 +947,39 @@ private:
         return E_FAIL;
     }
 public:
-    Manager(FnProcessImage callback):
+    Manager(const std::vector<Device::Ptr> &devList_, FnProcessImage callback):
         filterGraph(nullptr),
         captureGraph(nullptr),
         mediaControl(nullptr),
-        sampleGrabberCB(nullptr),
-        m_readyForCapture(false),
         m_activeDeviceNum(0),
-        deviceList()
+        devList(devList_)
     {
-        sampleGrabberCB = new SampleGrabberCB(callback);
         CoInitialize(NULL);
-        initializeGraph();
-        initializeVideo();
-        runControl();
+        if (initializeGraph(filterGraph, captureGraph, mediaControl)) {
+            initializeVideo(filterGraph, captureGraph, callback, devList);
+            runControl();
+        }
     }
 
     ~Manager()
     {
-        sampleGrabberCB->stop();
-        for (auto& device : deviceList) {
-            device->stop();
-            disconnectFilters(device.get());
+        for (auto& dev : devList) {
+            dev->stop();
+            disconnectFilters(dev.get());
         }
-        deviceList.erase(deviceList.begin(), deviceList.end());
+        devList.erase(devList.begin(), devList.end());
         stopControl();
 
         detail::objectRelease(&mediaControl);
         detail::objectRelease(&captureGraph);
         detail::objectRelease(&filterGraph);
-        delete sampleGrabberCB;
-        sampleGrabberCB = nullptr;
     }
 
     std::vector<std::wstring> getDeviceList() const
     {
         std::vector<std::wstring> names;
-        for (auto& device: deviceList) {
-            names.push_back(device->getFriendlyName());
+        for (auto& dev: devList) {
+            names.push_back(dev->getFriendlyName());
         }
         return names;
     }
@@ -944,12 +987,12 @@ public:
     std::vector<std::string> getResolutionList() const
     {
         std::vector<std::string> resolutions;
-        if (m_activeDeviceNum >= deviceList.size()) {
+        if (m_activeDeviceNum >= devList.size()) {
             return resolutions;
         }
 
-        const std::vector<Device::Property> &propertyList = deviceList[m_activeDeviceNum]->getPropertyList();
-        for (const Device::Property& property: propertyList) {
+        const std::vector<Device::Format> &formatList = devList[m_activeDeviceNum]->getFormatList();
+        for (const Device::Format& property: formatList) {
             std::string formatName = "unknown";
             for (auto& formatRow: g_imageFormatTable) {
                 if (formatRow.directshowFormat == property.pixelFormat) {
@@ -972,7 +1015,7 @@ public:
         if (!stopCapture()) {
             return false;
         }
-        if (deviceNum >= deviceList.size()) {
+        if (deviceNum >= devList.size()) {
             return false;
         }
         m_activeDeviceNum = deviceNum;
@@ -981,7 +1024,7 @@ public:
 
     bool onResolutionChanged(unsigned resolutionNum)
     {
-        if (m_activeDeviceNum >= deviceList.size()) {
+        if (m_activeDeviceNum >= devList.size()) {
             return false;
         }
 
@@ -990,12 +1033,12 @@ public:
             return false;
         }
 
-        auto propertyList = deviceList[m_activeDeviceNum]->getPropertyList();
-        if (resolutionNum >= propertyList.size()) {
+        auto formatList = devList[m_activeDeviceNum]->getFormatList();
+        if (resolutionNum >= formatList.size()) {
             return false;
         }
 
-        if (!deviceList[m_activeDeviceNum]->setCurrentProperty(propertyList[resolutionNum])) {
+        if (!devList[m_activeDeviceNum]->setCurrentFormat(formatList[resolutionNum])) {
             return false;
         }
 
@@ -1007,27 +1050,24 @@ public:
 
     bool startCapture()
     {
-        if (m_activeDeviceNum >= deviceList.size()) {
+        if (m_activeDeviceNum >= devList.size()) {
             return false;
         }
-        Device::Property &property = deviceList[m_activeDeviceNum]->currentProperty;
-        sampleGrabberCB->setProperty(property.width, property.height, detail::parsePixelFormat(property.pixelFormat));
-        sampleGrabberCB->start();
-        return deviceList[m_activeDeviceNum]->start();
+        return devList[m_activeDeviceNum]->start();
     }
 
     bool stopCapture()
     {
-        if (m_activeDeviceNum >= deviceList.size()) {
+        if (m_activeDeviceNum >= devList.size()) {
             return false;
         }
-        return deviceList[m_activeDeviceNum]->stop();
+        return devList[m_activeDeviceNum]->stop();
     }
 
     /* control parameter */
     int setControlParam(long property, long value, long flag=CameraControl_Flags_Manual)
     {
-        Device* device = deviceList[m_activeDeviceNum].get();
+        Device* device = devList[m_activeDeviceNum].get();
         IAMCameraControl *pCameraControl = nullptr;
         HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMCameraControl, (void**)&pCameraControl);
         if (FAILED(hr)) {
@@ -1044,7 +1084,7 @@ public:
 
     int getControlParam(long property, long &value, long &flag)
     {
-        Device* device = deviceList[m_activeDeviceNum].get();
+        Device* device = devList[m_activeDeviceNum].get();
         IAMCameraControl *pCameraControl = nullptr;
         HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMCameraControl, (void**)&pCameraControl);
         if (FAILED(hr)) {
@@ -1060,10 +1100,10 @@ public:
     }
 
     int getControlParamRange(long property,
-                          long &minValue, long &maxValue, long &step, long &defaultValue,
-                          long &flag)
+                             long &minValue, long &maxValue, long &step, long &defaultValue,
+                             long &flag)
     {
-        Device* device = deviceList[m_activeDeviceNum].get();
+        Device* device = devList[m_activeDeviceNum].get();
         IAMCameraControl *pCameraControl = nullptr;
         HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMCameraControl, (void**)&pCameraControl);
         if (FAILED(hr)) {
@@ -1101,7 +1141,7 @@ public:
     /* video process parameter */
     int setProcParam(long property, long value, long flag=VideoProcAmp_Flags_Manual)
     {
-        Device* device = deviceList[m_activeDeviceNum].get();
+        Device* device = devList[m_activeDeviceNum].get();
         IAMVideoProcAmp *pVideoProcAmp = NULL;
         HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMVideoProcAmp, (void**)&pVideoProcAmp);
         if (FAILED(hr)) {
@@ -1118,7 +1158,7 @@ public:
 
     int getProcParam(long property, long &value, long &flag)
     {
-        Device* device = deviceList[m_activeDeviceNum].get();
+        Device* device = devList[m_activeDeviceNum].get();
         IAMVideoProcAmp *pVideoProcAmp = NULL;
         HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMVideoProcAmp, (void**)&pVideoProcAmp);
         if (FAILED(hr)) {
@@ -1137,7 +1177,7 @@ public:
                           long &minValue, long &maxValue, long &step, long &defaultValue,
                           long &flag)
     {
-        Device* device = deviceList[m_activeDeviceNum].get();
+        Device* device = devList[m_activeDeviceNum].get();
         IAMVideoProcAmp *pVideoProcAmp = NULL;
         HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMVideoProcAmp, (void**)&pVideoProcAmp);
         if (FAILED(hr)) {

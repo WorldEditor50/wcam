@@ -5,6 +5,7 @@
 #include <QDesktopServices>
 #include "improcess/improcess.h"
 #include "settingsdialog.h"
+#include "emitter.h"
 
 CameraForm::CameraForm(QWidget *parent) :
     QWidget(parent),
@@ -49,7 +50,17 @@ CameraForm::CameraForm(QWidget *parent) :
             onRemoveDevice();
         }
     });
-    onAddDevice();
+    /* terminate */
+    connect(Emitter::ptr(), &Emitter::terminate, this, [=](){
+        if (cameraManager != nullptr) {
+            cameraManager->stopCapture();
+        }
+    });
+    std::wstring vendor;
+    int count = Camera::enumerate(vendor, devList);
+    if (count > 0) {
+        onAddDevice();
+    }
 }
 
 CameraForm::~CameraForm()
@@ -76,16 +87,20 @@ void CameraForm::updateImage(const QImage &img)
 
 void CameraForm::onAddDevice()
 {
+    if (devList.empty()) {
+        return;
+    }
+    if (cameraManager != nullptr) {
+        return;
+    }
+
     disconnect(ui->resolutionComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
                this, &CameraForm::onResolutionChanged);
     disconnect(ui->devComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
                this, &CameraForm::onDeviceChanged);
-    if (cameraManager != nullptr) {
-        stopCapture();
-        delete cameraManager;
-    }
 
-    cameraManager = new Camera::Manager([this](int h, int w, int c, unsigned char* data){
+
+    cameraManager = new Camera::Manager(devList, [this](int h, int w, int c, unsigned char* data){
         if (c == 3) {
             if (processMethod == imp::Method_None) {
                 emit sendImage(QImage(data, w, h, QImage::Format_RGB888));
@@ -98,8 +113,8 @@ void CameraForm::onAddDevice()
             emit sendImage(QImage(data, w, h, QImage::Format_ARGB32));
         }
     });
-    std::vector<std::wstring> devList = cameraManager->getDeviceList();
-    for (std::wstring& dev: devList) {
+    std::vector<std::wstring> devNameList = cameraManager->getDeviceList();
+    for (std::wstring& dev: devNameList) {
         ui->devComboBox->addItem(QString::fromWCharArray(dev.c_str()));
     }
     std::vector<std::string> resList = cameraManager->getResolutionList();
@@ -111,7 +126,9 @@ void CameraForm::onAddDevice()
             this, &CameraForm::onResolutionChanged);
     connect(ui->devComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &CameraForm::onDeviceChanged);
-    startCapture();
+
+    cameraManager->startCapture();
+    isStreaming = true;
     return;
 }
 
@@ -183,10 +200,3 @@ void CameraForm::stopCapture()
     return;
 }
 
-void CameraForm::closeEvent(QCloseEvent *ev)
-{
-    if (cameraManager != nullptr) {
-        cameraManager->stopCapture();
-    }
-    return;
-}

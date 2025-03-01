@@ -30,8 +30,6 @@ public slots:
     void onDeviceChanged(int deviceNum);
     void startCapture();
     void stopCapture();
-protected:
-    void closeEvent(QCloseEvent *ev) override;
 private:
     bool isStreaming;
     bool isReadyForCapture;
@@ -39,6 +37,7 @@ private:
     cv::Mat out;
     UsbHotplug hotplug;
     Ui::CameraForm *ui;
+    Camera::DeviceList devList;
     Camera::Manager *cameraManager;
 };
 
