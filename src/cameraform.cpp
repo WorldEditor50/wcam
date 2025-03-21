@@ -55,6 +55,10 @@ CameraForm::CameraForm(QWidget *parent) :
         if (cameraManager != nullptr) {
             cameraManager->stopCapture();
         }
+        if (cameraManager != nullptr) {
+            delete cameraManager;
+            cameraManager = nullptr;
+        }
     });
     std::wstring vendor;
     int count = Camera::enumerate(vendor, devList);
@@ -65,10 +69,6 @@ CameraForm::CameraForm(QWidget *parent) :
 
 CameraForm::~CameraForm()
 {
-    if (cameraManager != nullptr) {
-        delete cameraManager;
-        cameraManager = nullptr;
-    }
     delete ui;
 }
 
@@ -103,11 +103,12 @@ void CameraForm::onAddDevice()
     cameraManager = new Camera::Manager(devList, [this](int h, int w, int c, unsigned char* data){
         if (c == 3) {
             if (processMethod == imp::Method_None) {
-                emit sendImage(QImage(data, w, h, QImage::Format_RGB888));
+                out = cv::Mat(h, w, CV_8UC3, data);
+                emit sendImage(QImage(data, out.cols, out.rows, out.step, QImage::Format_RGB888));
             } else if (processMethod == imp::Method_Filter) {
                 cv::Mat img(h, w, CV_8UC3, data);
                 imp::filter(img, out);
-                emit sendImage(QImage(out.data, out.cols, out.rows, QImage::Format_RGB888));
+                emit sendImage(QImage(out.data, out.cols, out.rows, out.step, QImage::Format_RGB888));
             }
         } else if (c == 4){
             emit sendImage(QImage(data, w, h, QImage::Format_ARGB32));
@@ -154,7 +155,11 @@ void CameraForm::onResolutionChanged(int resolutionNum)
 {
     bool wasStreaming = isStreaming;
     stopCapture();
-    cameraManager->onResolutionChanged(resolutionNum);
+    bool ret = cameraManager->onResolutionChanged(resolutionNum);
+    if (!ret) {
+        std::cout<<"onResolutionChanged failed"<<std::endl;
+        return;
+    }
     if (wasStreaming) {
         startCapture();
     }

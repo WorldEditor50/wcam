@@ -518,7 +518,7 @@ void SettingsDialog::onBrightnessChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getBrightness(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -536,7 +536,7 @@ void SettingsDialog::onContrastChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getContrast(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -554,7 +554,7 @@ void SettingsDialog::onHueChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getHue(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -572,7 +572,7 @@ void SettingsDialog::onSaturationChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getSaturation(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -590,7 +590,7 @@ void SettingsDialog::onSharpnessChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getSharpness(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -608,7 +608,7 @@ void SettingsDialog::onGammaChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getGamma(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -626,7 +626,7 @@ void SettingsDialog::onWhiteBalanceChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getWhiteBalance(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -644,7 +644,7 @@ void SettingsDialog::onBacklightCompensationChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getBacklightCompensation(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -662,7 +662,7 @@ void SettingsDialog::onGainChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getGain(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -680,7 +680,7 @@ void SettingsDialog::onExposureChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getExposure(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
@@ -698,7 +698,7 @@ void SettingsDialog::onFocusChanged(int value, int flag)
     if (!QFile::exists("cameraparams_default.xml")) {
         saveParams("cameraparams_default.xml");
     }
-    Camera::ParamValue param;
+    Camera::Param param;
     cameraManager->getFocus(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;

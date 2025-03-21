@@ -34,7 +34,7 @@ enum ParamFlag {
     Param_Manual = 0x02
 };
 
-struct ParamValue {
+struct Param {
     long value;
     long step;
     long defaultValue;
@@ -44,17 +44,17 @@ struct ParamValue {
 };
 
 struct Params {
-    ParamValue brightness;
-    ParamValue contrast;
-    ParamValue hue;
-    ParamValue saturation;
-    ParamValue sharpness;
-    ParamValue gamma;
-    ParamValue whiteBalance;
-    ParamValue backlightCompensation;
-    ParamValue gain;
-    ParamValue exposure;
-    ParamValue focus;
+    Param brightness;
+    Param contrast;
+    Param hue;
+    Param saturation;
+    Param sharpness;
+    Param gamma;
+    Param whiteBalance;
+    Param backlightCompensation;
+    Param gain;
+    Param exposure;
+    Param focus;
 };
 
 struct ImageFormat {
@@ -179,15 +179,15 @@ public:
                                                   long WhichMethodToCallback) = 0;
 };
 
-class Buffer
+class Frame
 {
 public:
     unsigned char* data;
-    std::size_t dataSize;
+    std::size_t length;
     std::size_t capacity;
 public:
-    Buffer():data(nullptr),dataSize(0), capacity(0){}
-    ~Buffer()
+    Frame():data(nullptr),length(0), capacity(0){}
+    ~Frame()
     {
         if (data != nullptr) {
             delete [] data;
@@ -203,25 +203,159 @@ public:
         return size;
     }
 
-    void allocate(std::size_t size)
+    inline operator unsigned char* () noexcept
+    {
+        return data;
+    }
+
+    void allocate(std::size_t length_)
     {
         if (data == nullptr) {
-            capacity = align(size);
+            capacity = align(length_);
             data = new unsigned char[capacity];
         } else {
-            if (capacity < size) {
+            if (length_ > capacity) {
                 delete [] data;
-                capacity = align(size);
+                capacity = align(length_);
                 data = new unsigned char[capacity];
             }
         }
-        dataSize = size;
+        length = length_;
         return;
     }
 
+    void copy(unsigned char* data_, std::size_t length_)
+    {
+        allocate(length_);
+        memcpy(data, data_, length_);
+        return;
+    }
+
+
 };
 
-class SampleGrabberCB : public ISampleGrabberCB
+class PingPongSampler : public ISampleGrabberCB
+{
+public:
+    enum State {
+        STATE_NONE = 0,
+        STATE_RUN,
+        STATE_TERMINATE
+    };
+    constexpr static int max_buffer_len = 8;
+private:
+    int width;
+    int height;
+    int pixelFormat;
+    int state;
+    int in;
+    int out;
+    Frame encodeFrame[max_buffer_len];
+    Frame decodeFrame[max_buffer_len];
+    std::mutex mutex;
+    std::thread processThread;
+    FnProcessImage processImage;
+protected:
+    void run()
+    {
+        std::cout<<"enter process image"<<std::endl;
+        while (state != STATE_TERMINATE) {
+            int index = out;
+            Frame &frame = encodeFrame[index];
+            if (frame.data == nullptr) {
+                continue;
+            }
+            Frame& image = decodeFrame[index];
+            /* decode */
+            switch (pixelFormat) {
+            case PixelFormat_MJPG:
+                Jpeg::decode(image.data, width, height,
+                             frame.data, frame.length, Jpeg::ALIGN_4);
+                processImage(height, width, 3, image.data);
+                break;
+            case PixelFormat_YUY2: {
+                int alignedWidth = (width + 1) & ~1;
+                libyuv::YUY2ToARGB(frame.data, alignedWidth * 2,
+                        image.data, width * 4,
+                        width, height);
+                processImage(height, width, 4, image.data);
+                break;
+            }
+            default:
+                break;
+            }
+
+        }
+        state = STATE_NONE;
+        std::cout<<"leave process image"<<std::endl;
+        return;
+    }
+public:
+    PingPongSampler():width(0), height(0), pixelFormat(0),
+        state(STATE_NONE), in(0), out(0){}
+    virtual ~PingPongSampler(){}
+
+    virtual HRESULT STDMETHODCALLTYPE SampleCB(double time, IMediaSample* sample) override
+    {
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE BufferCB(double time, BYTE* buffer, long len) override
+    {
+        if (!buffer || len <= 0) {
+            return S_OK;
+        }
+        encodeFrame[in].copy(buffer, len);
+        out = in;
+        in = (in + 1)%max_buffer_len;
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID *ppv) override
+    {
+        if(iid == IID_ISampleGrabberCB || iid == IID_IUnknown) {
+            *ppv = reinterpret_cast<LPVOID*>(this);
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+    virtual ULONG STDMETHODCALLTYPE AddRef() { return 1;}
+    virtual ULONG STDMETHODCALLTYPE Release() { return 1;}
+
+    void registerProcess(const FnProcessImage &func) { processImage = func; }
+
+    void start(int w, int h, int format)
+    {
+        if (state != STATE_NONE) {
+            return;
+        }
+        width = w;
+        height = h;
+        pixelFormat = format;
+        /* allocate memory for image */
+        unsigned long len = width * height * 4;
+        if (pixelFormat == PixelFormat_MJPG) {
+            len = Jpeg::align4(width, 3)*height;
+        } else if (pixelFormat == PixelFormat_YUY2) {
+            len = width * height * 4;
+        }
+        for (int i = 0; i < max_buffer_len; i++) {
+            decodeFrame[i].allocate(len);
+        }
+        state = STATE_RUN;
+        processThread = std::thread(&PingPongSampler::run, this);
+        return;
+    }
+
+    void stop()
+    {
+        if (state != STATE_NONE) {
+            state = STATE_TERMINATE;
+            processThread.join();
+        }
+        return;
+    }
+};
+
+class AsyncSampler : public ISampleGrabberCB
 {
 public:
     enum State {
@@ -231,15 +365,15 @@ public:
         STATE_PROCESS,
         STATE_TERMINATE
     };
-    static constexpr int max_image_block = 4;
+    static constexpr int max_buffer_len = 4;
 private:
     int width;
     int height;
     int pixelFormat;
     int state;
     int index;
-    Buffer rawBuffer;
-    Buffer imageBlocks[max_image_block];
+    Frame encodeFrame;
+    Frame decodeFrame[max_buffer_len];
     std::condition_variable condit;
     std::mutex mutex;
     std::thread processThread;
@@ -259,24 +393,17 @@ protected:
             } else if (state == STATE_PREPEND) {
                 continue;
             }
-            /* allocate memory for image */
-            unsigned long len = width * height * 4;
-            if (pixelFormat == PixelFormat_MJPG) {
-                len = Jpeg::align4(width, 3)*height;
-            } else if (pixelFormat == PixelFormat_YUY2) {
-                len = width * height * 4;
-            }
-            Buffer& image = imageBlocks[index];
-            index = (index + 1)%max_image_block;
-            image.allocate(len);
+            Frame& image = decodeFrame[index];
+            index = (index + 1)%max_buffer_len;
+
             /* decode */
             if (pixelFormat == PixelFormat_MJPG) {
-                Jpeg::decode(image.data, width, height, rawBuffer.data, rawBuffer.dataSize, Jpeg::ALIGN_4);
+                Jpeg::decode(image.data, width, height, encodeFrame.data, encodeFrame.length, Jpeg::ALIGN_4);
                 /* process */
                 processImage(height, width, 3, image.data);
             } else if(pixelFormat == PixelFormat_YUY2) {
                 int alignedWidth = (width + 1) & ~1;
-                libyuv::YUY2ToARGB(rawBuffer.data, alignedWidth * 2,
+                libyuv::YUY2ToARGB(encodeFrame.data, alignedWidth * 2,
                         image.data, width * 4,
                         width, height);
                 processImage(height, width, 4, image.data);
@@ -292,8 +419,8 @@ protected:
         return;
     }
 public:
-    SampleGrabberCB():width(0), height(0), pixelFormat(0), state(STATE_NONE), index(0){}
-    virtual ~SampleGrabberCB(){}
+    AsyncSampler():width(0), height(0), pixelFormat(0), state(STATE_NONE), index(0){}
+    virtual ~AsyncSampler(){}
 
     virtual HRESULT STDMETHODCALLTYPE SampleCB(double time, IMediaSample* sample)
     {
@@ -307,9 +434,7 @@ public:
 
         if (state == STATE_PREPEND) {
             std::unique_lock<std::mutex> locker(mutex);
-            rawBuffer.allocate(len);
-            memcpy(rawBuffer.data, buffer, len);
-            rawBuffer.dataSize = len;
+            encodeFrame.copy(buffer, len);
             state = STATE_FRAME_READY;
             condit.notify_all();
         }
@@ -328,22 +453,26 @@ public:
 
     void registerProcess(const FnProcessImage &func) { processImage = func; }
 
-    void setProperty(int w, int h, int format)
-    {
-        std::unique_lock<std::mutex> locker(mutex);
-        width = w;
-        height = h;
-        pixelFormat = format;
-        return;
-    }
-
-    void start()
+    void start(int w, int h, int format)
     {
         if (state != STATE_NONE) {
             return;
         }
+        width = w;
+        height = h;
+        pixelFormat = format;
+        /* allocate memory for image */
+        unsigned long len = width * height * 4;
+        if (pixelFormat == PixelFormat_MJPG) {
+            len = Jpeg::align4(width, 3)*height;
+        } else if (pixelFormat == PixelFormat_YUY2) {
+            len = width * height * 4;
+        }
+        for (int i = 0; i < max_buffer_len; i++) {
+            decodeFrame[i].allocate(len);
+        }
         state = STATE_PREPEND;
-        processThread = std::thread(&SampleGrabberCB::run, this);
+        processThread = std::thread(&AsyncSampler::run, this);
         return;
     }
 
@@ -363,6 +492,8 @@ public:
         return;
     }
 };
+
+using SampleGrabberCB = AsyncSampler;
 
 struct Property {
     int id;
@@ -468,10 +599,9 @@ public:
         if (formatList.empty()) {
             return false;
         }
-        sampleGrabberCB->setProperty(currentFormat.width,
-                                     currentFormat.height,
-                                     detail::parsePixelFormat(currentFormat.pixelFormat));
-        sampleGrabberCB->start();
+        sampleGrabberCB->start(currentFormat.width,
+                               currentFormat.height,
+                               detail::parsePixelFormat(currentFormat.pixelFormat));
 
         HRESULT hr = S_FALSE;
         if (nullRenderer) {
@@ -854,8 +984,8 @@ private:
 
             IAMVideoControl* pVideoControl = nullptr;
             hr = captureGraph->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                          dev->sourceFilter, IID_IAMVideoControl,
-                                          reinterpret_cast<void**>(&pVideoControl));
+                                             dev->sourceFilter, IID_IAMVideoControl,
+                                             reinterpret_cast<void**>(&pVideoControl));
             if (hr < 0) {
                 continue;
             }
@@ -947,12 +1077,9 @@ private:
         return E_FAIL;
     }
 public:
-    Manager(const std::vector<Device::Ptr> &devList_, FnProcessImage callback):
-        filterGraph(nullptr),
-        captureGraph(nullptr),
-        mediaControl(nullptr),
-        m_activeDeviceNum(0),
-        devList(devList_)
+    explicit Manager(const std::vector<Device::Ptr> &devList_, FnProcessImage callback)
+        :filterGraph(nullptr),captureGraph(nullptr),mediaControl(nullptr),
+        m_activeDeviceNum(0),devList(devList_)
     {
         CoInitialize(NULL);
         if (initializeGraph(filterGraph, captureGraph, mediaControl)) {
@@ -1039,6 +1166,7 @@ public:
         }
 
         if (!devList[m_activeDeviceNum]->setCurrentFormat(formatList[resolutionNum])) {
+            std::cout<<"setCurrentFormat failed"<<std::endl;
             return false;
         }
 
