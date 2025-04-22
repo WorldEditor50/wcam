@@ -1,0 +1,4 @@
+# folder
+3rdParty/
+# cmake
+*.user

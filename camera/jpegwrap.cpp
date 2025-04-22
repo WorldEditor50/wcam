@@ -8,8 +8,8 @@ void Jpeg::errorNotify(j_common_ptr cinfo)
     return;
 }
 
-int Jpeg::encode(uint8_t*& jpeg, std::size_t &totalsize,
-                 uint8_t* rgb, int w, int h, int rowstride, int quality)
+int Jpeg::encode(unsigned char*& out,  unsigned long &totalsize,
+                 unsigned char* rgb, int w, int h, int quality)
 {
     struct jpeg_compress_struct cinfo;
     Jpeg::Error jpegError;
@@ -21,9 +21,8 @@ int Jpeg::encode(uint8_t*& jpeg, std::size_t &totalsize,
         return -1;
     }
     jpeg_create_compress(&cinfo);
-    unsigned long size = 0;
-    jpeg_mem_dest(&cinfo, &jpeg, &size);
-    totalsize = size;
+    /* allocate memory for output buffer */
+    jpeg_mem_dest(&cinfo, &out, &totalsize);
     cinfo.image_width = w;
     cinfo.image_height = h;
     cinfo.input_components = 3;
@@ -31,6 +30,7 @@ int Jpeg::encode(uint8_t*& jpeg, std::size_t &totalsize,
     jpeg_set_defaults(&cinfo);
     jpeg_set_quality(&cinfo, quality, TRUE);
     jpeg_start_compress(&cinfo,TRUE);
+    int rowstride = w*cinfo.input_components;
     while (cinfo.next_scanline < cinfo.image_height) {
         row_pointer[0] = &rgb[cinfo.next_scanline*rowstride];
         (void)jpeg_write_scanlines(&cinfo, row_pointer, 1);
@@ -40,8 +40,8 @@ int Jpeg::encode(uint8_t*& jpeg, std::size_t &totalsize,
     return 0;
 }
 
-int Jpeg::decode(uint8_t *rgb, int &w, int &h,
-                 uint8_t *jpeg, std::size_t totalsize, int scale, int align)
+int Jpeg::decode(unsigned char *rgb, int &w, int &h,
+                 unsigned char *jpeg,  unsigned long totalsize, int scale, int align)
 {
     if (jpeg == nullptr || totalsize == 0) {
         return -1;
@@ -92,7 +92,7 @@ int Jpeg::decode(uint8_t *rgb, int &w, int &h,
     return 0;
 }
 
-int Jpeg::load(const char *filename, std::shared_ptr<uint8_t[]> &img, int &h, int &w, int &c)
+int Jpeg::load(const char *filename, std::shared_ptr<unsigned char[]> &img, int &h, int &w, int &c)
 {
     /* This struct contains the JPEG decompression parameters and pointers to
      * working space (which is allocated as needed by the JPEG library).
@@ -225,7 +225,7 @@ int Jpeg::load(const char *filename, std::shared_ptr<uint8_t[]> &img, int &h, in
     return 0;
 }
 
-int Jpeg::save(const char *filename, uint8_t *img, int h, int w, int c, int quality)
+int Jpeg::save(const char *filename, unsigned char *img, int h, int w, int c, int quality)
 {
     /* This struct contains the JPEG compression parameters and pointers to
      * working space (which is allocated as needed by the JPEG library).

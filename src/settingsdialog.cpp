@@ -5,10 +5,10 @@
 #include <QFileDialog>
 #include <QFileInfo>
 
-SettingsDialog::SettingsDialog(Camera::Manager *cameraManager_, QWidget *parent) :
+SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::SettingsDialog),
-    cameraManager(cameraManager_)
+    dev(dev_)
 {
     ui->setupUi(this);
     setWindowTitle("Camera Parameters");
@@ -25,7 +25,7 @@ SettingsDialog::SettingsDialog(Camera::Manager *cameraManager_, QWidget *parent)
         loadParams(filePath);
         return;
     });
-    cameraManager->getParams(cameraParams);
+    dev->getParams(cameraParams);
     updateParams();
     /* brightness */
     connect(ui->brightnessSlider, &QSlider::valueChanged, this, [=](int value){
@@ -349,7 +349,7 @@ void SettingsDialog::updateParams()
 
 void SettingsDialog::setParams()
 {
-    cameraManager->setParams(cameraParams);
+    dev->setParams(cameraParams);
     updateParams();
     return;
 }
@@ -362,7 +362,7 @@ void SettingsDialog::saveParams(const QString &fileName)
         return;
     }
     /* get camera params */
-    cameraManager->getParams(cameraParams);
+    dev->getParams(cameraParams);
     QDomDocument doc;
     /* instruction */
     QDomProcessingInstruction instruction;
@@ -519,14 +519,14 @@ void SettingsDialog::onBrightnessChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getBrightness(param.value, param.flag);
+    dev->getBrightness(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setBrightness(value, Camera::Param_Manual);
+        dev->setBrightness(value, Camera::Param_Manual);
     } else {
-        cameraManager->setBrightness(param.value, Camera::Param_Auto);
+        dev->setBrightness(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -537,14 +537,14 @@ void SettingsDialog::onContrastChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getContrast(param.value, param.flag);
+    dev->getContrast(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setContrast(value, Camera::Param_Manual);
+        dev->setContrast(value, Camera::Param_Manual);
     } else {
-        cameraManager->setContrast(param.value, Camera::Param_Auto);
+        dev->setContrast(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -555,14 +555,14 @@ void SettingsDialog::onHueChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getHue(param.value, param.flag);
+    dev->getHue(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setHue(value, Camera::Param_Manual);
+        dev->setHue(value, Camera::Param_Manual);
     } else {
-        cameraManager->setHue(param.value, Camera::Param_Auto);
+        dev->setHue(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -573,14 +573,14 @@ void SettingsDialog::onSaturationChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getSaturation(param.value, param.flag);
+    dev->getSaturation(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setSaturation(value, Camera::Param_Manual);
+        dev->setSaturation(value, Camera::Param_Manual);
     } else {
-        cameraManager->setSaturation(param.value, Camera::Param_Auto);
+        dev->setSaturation(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -591,14 +591,14 @@ void SettingsDialog::onSharpnessChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getSharpness(param.value, param.flag);
+    dev->getSharpness(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setSharpness(value, Camera::Param_Manual);
+        dev->setSharpness(value, Camera::Param_Manual);
     } else {
-        cameraManager->setSharpness(param.value, Camera::Param_Auto);
+        dev->setSharpness(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -609,14 +609,14 @@ void SettingsDialog::onGammaChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getGamma(param.value, param.flag);
+    dev->getGamma(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setGamma(value, Camera::Param_Manual);
+        dev->setGamma(value, Camera::Param_Manual);
     } else {
-        cameraManager->setGamma(param.value, Camera::Param_Auto);
+        dev->setGamma(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -627,14 +627,14 @@ void SettingsDialog::onWhiteBalanceChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getWhiteBalance(param.value, param.flag);
+    dev->getWhiteBalance(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setWhiteBalance(value, Camera::Param_Manual);
+        dev->setWhiteBalance(value, Camera::Param_Manual);
     } else {
-        cameraManager->setWhiteBalance(param.value, Camera::Param_Auto);
+        dev->setWhiteBalance(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -645,14 +645,14 @@ void SettingsDialog::onBacklightCompensationChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getBacklightCompensation(param.value, param.flag);
+    dev->getBacklightCompensation(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setBacklightCompensation(value, Camera::Param_Manual);
+        dev->setBacklightCompensation(value, Camera::Param_Manual);
     } else {
-        cameraManager->setBacklightCompensation(param.value, Camera::Param_Auto);
+        dev->setBacklightCompensation(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -663,14 +663,14 @@ void SettingsDialog::onGainChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getGain(param.value, param.flag);
+    dev->getGain(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setGain(value, Camera::Param_Manual);
+        dev->setGain(value, Camera::Param_Manual);
     } else {
-        cameraManager->setGain(param.value, Camera::Param_Auto);
+        dev->setGain(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -681,14 +681,14 @@ void SettingsDialog::onExposureChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getExposure(param.value, param.flag);
+    dev->getExposure(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setExposure(value, Camera::Param_Manual);
+        dev->setExposure(value, Camera::Param_Manual);
     } else {
-        cameraManager->setExposure(param.value, Camera::Param_Auto);
+        dev->setExposure(param.value, Camera::Param_Auto);
     }
     return;
 }
@@ -699,14 +699,14 @@ void SettingsDialog::onFocusChanged(int value, int flag)
         saveParams("cameraparams_default.xml");
     }
     Camera::Param param;
-    cameraManager->getFocus(param.value, param.flag);
+    dev->getFocus(param.value, param.flag);
     if (param.value == value && flag == Camera::Param_Manual) {
         return;
     }
     if (flag == Camera::Param_Manual) {
-        cameraManager->setFocus(value, Camera::Param_Manual);
+        dev->setFocus(value, Camera::Param_Manual);
     } else {
-        cameraManager->setFocus(param.value, Camera::Param_Auto);
+        dev->setFocus(param.value, Camera::Param_Auto);
     }
     return;
 }

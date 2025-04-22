@@ -27,12 +27,12 @@ namespace Jpeg {
 
     void errorNotify(j_common_ptr cinfo);
     inline int align4(int width, int channel) {return (width*channel+3)/4*4;}
-    int encode(uint8_t*& jpeg, std::size_t &totalsize,
-               uint8_t* img, int w, int h, int rowstride, int quality=90);
-    int decode(uint8_t *rgb, int &w, int &h,
-               uint8_t *jpeg, std::size_t totalsize, int scale = SCALE_D1, int align=ALIGN_4);
+    int encode(unsigned char*& jpeg, unsigned long &totalsize,
+               unsigned char* img, int w, int h, int quality=90);
+    int decode(unsigned char *rgb, int &w, int &h,
+               unsigned char *jpeg,  unsigned long totalsize, int scale = SCALE_D1, int align=ALIGN_4);
     int load(const char* filename, std::shared_ptr<uint8_t[]>& img, int &h, int &w, int &c);
-    int save(const char* filename, uint8_t* img, int h, int w, int c, int quality=90);
+    int save(const char* filename, unsigned char* img, int h, int w, int c, int quality=90);
 }
 
 

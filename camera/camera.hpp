@@ -28,6 +28,7 @@ class Manager;
 class Device;
 
 using FnProcessImage = std::function<void(int h, int w, int c, unsigned char* data)>;
+using FnProcessRaw = std::function<void(int h, int w, int type, unsigned char* data)>;
 
 enum ParamFlag {
     Param_Auto = 0x01,
@@ -183,8 +184,8 @@ class Frame
 {
 public:
     unsigned char* data;
-    std::size_t length;
-    std::size_t capacity;
+    unsigned long length;
+    unsigned long capacity;
 public:
     Frame():data(nullptr),length(0), capacity(0){}
     ~Frame()
@@ -194,9 +195,9 @@ public:
             data = nullptr;
         }
     }
-    static std::size_t align(std::size_t s)
+    static unsigned long align(unsigned long s)
     {
-        std::size_t size = s;
+        unsigned long size = s;
         if (size&0x3ff) {
             size = ((size >> 10) + 1)<<10;
         }
@@ -208,7 +209,7 @@ public:
         return data;
     }
 
-    void allocate(std::size_t length_)
+    void allocate(unsigned long length_)
     {
         if (data == nullptr) {
             capacity = align(length_);
@@ -224,7 +225,7 @@ public:
         return;
     }
 
-    void copy(unsigned char* data_, std::size_t length_)
+    void copy(unsigned char* data_, unsigned long length_)
     {
         allocate(length_);
         memcpy(data, data_, length_);
@@ -234,7 +235,43 @@ public:
 
 };
 
-class PingPongSampler : public ISampleGrabberCB
+class DecodeSampler : public ISampleGrabberCB
+{
+public:
+    int width;
+    int height;
+    int pixelFormat;
+    FnProcessImage processImage;
+public:
+    DecodeSampler():width(0), height(0), pixelFormat(0){}
+    virtual ~DecodeSampler(){}
+
+    void registerProcess(const FnProcessImage &func) { processImage = func; }
+
+    void decode(const Frame& xi, Frame &xo)
+    {
+        switch (pixelFormat) {
+        case PixelFormat_MJPG:
+            Jpeg::decode(xo.data, width, height,
+                         xi.data, xi.length, Jpeg::ALIGN_4);
+            processImage(height, width, 3, xo.data);
+            break;
+        case PixelFormat_YUY2: {
+            int alignedWidth = (width + 1) & ~1;
+            libyuv::YUY2ToARGB(xi.data, alignedWidth * 2,
+                    xo.data, width * 4,
+                    width, height);
+            processImage(height, width, 4, xo.data);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+};
+
+class PingPongSampler : public DecodeSampler
 {
 public:
     enum State {
@@ -244,17 +281,12 @@ public:
     };
     constexpr static int max_buffer_len = 8;
 private:
-    int width;
-    int height;
-    int pixelFormat;
     int state;
     int in;
     int out;
     Frame encodeFrame[max_buffer_len];
     Frame decodeFrame[max_buffer_len];
-    std::mutex mutex;
     std::thread processThread;
-    FnProcessImage processImage;
 protected:
     void run()
     {
@@ -267,32 +299,14 @@ protected:
             }
             Frame& image = decodeFrame[index];
             /* decode */
-            switch (pixelFormat) {
-            case PixelFormat_MJPG:
-                Jpeg::decode(image.data, width, height,
-                             frame.data, frame.length, Jpeg::ALIGN_4);
-                processImage(height, width, 3, image.data);
-                break;
-            case PixelFormat_YUY2: {
-                int alignedWidth = (width + 1) & ~1;
-                libyuv::YUY2ToARGB(frame.data, alignedWidth * 2,
-                        image.data, width * 4,
-                        width, height);
-                processImage(height, width, 4, image.data);
-                break;
-            }
-            default:
-                break;
-            }
-
+            decode(frame, image);
         }
         state = STATE_NONE;
         std::cout<<"leave process image"<<std::endl;
         return;
     }
 public:
-    PingPongSampler():width(0), height(0), pixelFormat(0),
-        state(STATE_NONE), in(0), out(0){}
+    PingPongSampler():state(STATE_NONE), in(0), out(0){}
     virtual ~PingPongSampler(){}
 
     virtual HRESULT STDMETHODCALLTYPE SampleCB(double time, IMediaSample* sample) override
@@ -319,8 +333,6 @@ public:
     }
     virtual ULONG STDMETHODCALLTYPE AddRef() { return 1;}
     virtual ULONG STDMETHODCALLTYPE Release() { return 1;}
-
-    void registerProcess(const FnProcessImage &func) { processImage = func; }
 
     void start(int w, int h, int format)
     {
@@ -355,7 +367,7 @@ public:
     }
 };
 
-class AsyncSampler : public ISampleGrabberCB
+class AsyncSampler : public DecodeSampler
 {
 public:
     enum State {
@@ -367,9 +379,6 @@ public:
     };
     static constexpr int max_buffer_len = 4;
 private:
-    int width;
-    int height;
-    int pixelFormat;
     int state;
     int index;
     Frame encodeFrame;
@@ -377,14 +386,13 @@ private:
     std::condition_variable condit;
     std::mutex mutex;
     std::thread processThread;
-    FnProcessImage processImage;
 protected:
     void run()
     {
         std::cout<<"enter process image"<<std::endl;
         while (1) {
             std::unique_lock<std::mutex> locker(mutex);
-            condit.wait_for(locker, std::chrono::milliseconds(1000), [this]()->bool{
+            condit.wait_for(locker, std::chrono::milliseconds(500), [this]()->bool{
                                     return state == STATE_TERMINATE || state == STATE_FRAME_READY;
                                 });
             if (state == STATE_TERMINATE) {
@@ -395,21 +403,8 @@ protected:
             }
             Frame& image = decodeFrame[index];
             index = (index + 1)%max_buffer_len;
-
             /* decode */
-            if (pixelFormat == PixelFormat_MJPG) {
-                Jpeg::decode(image.data, width, height, encodeFrame.data, encodeFrame.length, Jpeg::ALIGN_4);
-                /* process */
-                processImage(height, width, 3, image.data);
-            } else if(pixelFormat == PixelFormat_YUY2) {
-                int alignedWidth = (width + 1) & ~1;
-                libyuv::YUY2ToARGB(encodeFrame.data, alignedWidth * 2,
-                        image.data, width * 4,
-                        width, height);
-                processImage(height, width, 4, image.data);
-            } else {
-                std::cout<<"unresolve format:"<<pixelFormat<<std::endl;
-            }
+            decode(encodeFrame, image);
             /* get next image */
             if (state != STATE_TERMINATE) {
                 state = STATE_PREPEND;
@@ -419,7 +414,7 @@ protected:
         return;
     }
 public:
-    AsyncSampler():width(0), height(0), pixelFormat(0), state(STATE_NONE), index(0){}
+    AsyncSampler():state(STATE_NONE), index(0){}
     virtual ~AsyncSampler(){}
 
     virtual HRESULT STDMETHODCALLTYPE SampleCB(double time, IMediaSample* sample)
@@ -450,8 +445,6 @@ public:
     }
     virtual ULONG STDMETHODCALLTYPE AddRef() { return 1;}
     virtual ULONG STDMETHODCALLTYPE Release() { return 1;}
-
-    void registerProcess(const FnProcessImage &func) { processImage = func; }
 
     void start(int w, int h, int format)
     {
@@ -495,286 +488,27 @@ public:
 
 using SampleGrabberCB = AsyncSampler;
 
-struct Property {
-    int id;
-    std::wstring vendorID;
-    std::wstring productID;
-    std::wstring friendlyName;
-    std::wstring filterName;
-};
 
-class Device : public Property
+class Graph
 {
-public:
-    class Format
-    {
-    public:
-        LONG width;
-        LONG height;
-        LONG isFlippedHorizontal;
-        LONG isFlippedVertical;
-        GUID pixelFormat;
-        AM_MEDIA_TYPE mediaType;
-    public:
-        Format(): mediaType(), width(0), height(0), pixelFormat(),
-            isFlippedHorizontal(false), isFlippedVertical(false) {}
-    };
-
-    friend class Manager;
-    using Ptr = std::shared_ptr<Device>;
-public:
-    bool isActiveValue;
-    IMoniker* moniker;
-    IBaseFilter* sourceFilter;
-    IBaseFilter* sampleGrabberFilter;
-    IBaseFilter* nullRenderer;
-    ISampleGrabber* sampleGrabber;
-    SampleGrabberCB* sampleGrabberCB;
-    IFilterGraph2* filterGraph;
-    IAMStreamConfig* streamConfig;
-    Device::Format currentFormat;
-    std::vector<Device::Format> formatList;
-public:
-    Device():isActiveValue(false), moniker(nullptr), sourceFilter(nullptr),
-        sampleGrabberFilter(nullptr), nullRenderer(nullptr),
-        sampleGrabber(nullptr), sampleGrabberCB(new SampleGrabberCB),
-        filterGraph(nullptr), streamConfig(nullptr){}
-
-    ~Device()
-    {
-
-        detail::objectRelease(&moniker);
-        detail::objectRelease(&sourceFilter);
-        detail::objectRelease(&sampleGrabberFilter);
-        detail::objectRelease(&sampleGrabber);
-        detail::objectRelease(&nullRenderer);
-        detail::objectRelease(&streamConfig);
-        if (sampleGrabberCB) {
-            delete sampleGrabberCB;
-            sampleGrabberCB = nullptr;
-        }
-    }
-
-    int getId() const {return id;}
-
-    std::wstring getFriendlyName() const {return friendlyName;}
-
-    const std::vector<Device::Format> &getFormatList() const { return formatList;}
-
-    const Device::Format &getCurrentFormat() const {return currentFormat;}
-
-    bool setCurrentFormat(const Device::Format& format)
-    {
-        currentFormat = format;
-
-        AM_MEDIA_TYPE mt = format.mediaType;
-        HRESULT hr = streamConfig->SetFormat(&mt);
-        if (hr < 0) {
-            return false;
-        }
-        return true;
-    }
-
-    HRESULT registerSampleCB(const GUID &pixelFormat, const FnProcessImage &callbak)
-    {
-        HRESULT hr = S_FALSE;
-        // set the media type
-        AM_MEDIA_TYPE mt;
-        memset(&mt, 0, sizeof(AM_MEDIA_TYPE));
-        mt.majortype = MEDIATYPE_Video;
-        mt.subtype = pixelFormat;
-        hr = sampleGrabber->SetMediaType(&mt);
-        if (hr != S_OK) {
-            return hr;
-        }
-        sampleGrabberCB->registerProcess(callbak);
-        // add the callback to the samplegrabber, 0-->SampleCB, 1-->BufferCB
-        return sampleGrabber->SetCallback(sampleGrabberCB, 1);
-    }
-
-    bool isActive() const {return isActiveValue; }
-
-    bool start()
-    {
-        if (formatList.empty()) {
-            return false;
-        }
-        sampleGrabberCB->start(currentFormat.width,
-                               currentFormat.height,
-                               detail::parsePixelFormat(currentFormat.pixelFormat));
-
-        HRESULT hr = S_FALSE;
-        if (nullRenderer) {
-            hr = nullRenderer->Run(0);
-            if (hr < 0) {
-                return false;
-            }
-        }
-
-        if (sampleGrabberFilter) {
-            hr = sampleGrabberFilter->Run(0);
-            if (hr < 0) {
-                return false;
-            }
-        }
-
-        if (sourceFilter) {
-            hr = sourceFilter->Run(0);
-            if (hr < 0) {
-                return false;
-            }
-        }
-        isActiveValue = true;
-        return true;
-    }
-
-    bool stop()
-    {
-        isActiveValue = false;
-        HRESULT hr = S_FALSE;
-        if (sampleGrabberCB) {
-            sampleGrabberCB->stop();
-        }
-
-        if (sourceFilter) {
-            hr = sourceFilter->Stop();
-            if (hr < 0) {
-                return false;
-            }
-        }
-
-        if (sampleGrabberFilter) {
-            hr = sampleGrabberFilter->Stop();
-            if (hr < 0) {
-                return false;
-            }
-        }
-
-        if (nullRenderer) {
-            hr = nullRenderer->Stop();
-            if (hr < 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-};
-
-using DeviceList = std::vector<Device::Ptr>;
-
-inline std::wstring createUniqueName(const std::wstring& name, int id)
-{
-    std::stringstream stream;
-    stream << "id" << id;
-    std::string uniquePostfix = stream.str();
-    std::wstring newName = name + std::wstring(uniquePostfix.begin(), uniquePostfix.end());
-    return newName;
-}
-
-inline int enumerate(const std::wstring &vendorID, DeviceList &devList)
-{
-    HRESULT hr = S_FALSE;
-    VARIANT name;
-    std::wstring filterName;
-    ICreateDevEnum* devEnum = nullptr;
-    IEnumMoniker* enumMoniker = nullptr;
-    IMoniker* moniker = nullptr;
-    IPropertyBag* pbag = nullptr;
-    // create an enumerator for video input devices
-    hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr,
-                          CLSCTX_INPROC_SERVER, IID_ICreateDevEnum,
-                          reinterpret_cast<void**>(&devEnum));
-    if (hr < 0 || !devEnum) {
-        return -1;
-    }
-    hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory,
-                                        &enumMoniker, NULL);
-    if (hr < 0 || !enumMoniker) {
-        return -1;
-    }
-    int devNum = 0;
-    while (enumMoniker->Next(1, &moniker, 0) == S_OK) {
-        ++devNum;
-        hr = moniker->BindToStorage(nullptr, nullptr, IID_IPropertyBag,
-                                    reinterpret_cast<void**>(&pbag));
-        if (hr < 0) {
-            moniker->Release();
-            continue;
-        }
-        VariantInit(&name);
-        hr = pbag->Read(L"Description", &name, 0);
-        if (hr < 0) {
-            hr = pbag->Read(L"FriendlyName", &name, 0);
-            if (hr < 0) {
-                VariantClear(&name);
-                pbag->Release();
-                moniker->Release();
-                continue;
-            }
-        }
-        WCHAR* wDisplayName = nullptr;
-        hr = moniker->GetDisplayName(nullptr, nullptr, &wDisplayName);
-        if (hr < 0) {
-            VariantClear(&name);
-            pbag->Release();
-            moniker->Release();
-            continue;
-        }
-        std::wcout<<L"Found Device:"<<wDisplayName<<std::endl;
-        std::wstring displayName(wDisplayName);
-        int pos = displayName.find(L"vid_");
-        std::wstring vid = displayName.substr(pos + 4, 4);
-        pos = displayName.find(L"pid_");
-        std::wstring pid = displayName.substr(pos + 4, 4);
-        std::wcout<<L"vid:"<<vid<<L", pid:"<<pid<<std::endl;
-        free(wDisplayName);
-        if (hr < 0) {
-            VariantClear(&name);
-            pbag->Release();
-            moniker->Release();
-            continue;
-        }
-
-        if (!vendorID.empty() && vendorID != vid) {
-            VariantClear(&name);
-            pbag->Release();
-            moniker->Release();
-            continue;
-        }
-
-        Device::Ptr dev(new Device);
-        dev->id = devNum;
-        std::wstring wname(name.bstrVal, SysStringLen(name.bstrVal));
-        dev->friendlyName = wname;
-        dev->filterName = createUniqueName(wname, devNum);
-        dev->vendorID = vid;
-        dev->productID = pid;
-        dev->moniker = moniker;
-        devList.push_back(dev);
-
-        VariantClear(&name);
-        pbag->Release();
-    }
-    enumMoniker->Release();
-    devEnum->Release();
-    return devNum;
-}
-
-class Manager
-{
+    friend class Device;
 private:
     IFilterGraph2* filterGraph;
     ICaptureGraphBuilder2* captureGraph;
     IMediaControl* mediaControl;
-    int m_activeDeviceNum;
-    DeviceList devList;
-private:
+public:
+    Graph():filterGraph(nullptr),captureGraph(nullptr),mediaControl(nullptr){}
 
-    static bool initializeGraph(IFilterGraph2* &filterGraph,
-                                ICaptureGraphBuilder2* &captureGraph,
-                                IMediaControl* &mediaControl)
+    ~Graph()
     {
+        detail::objectRelease(&mediaControl);
+        detail::objectRelease(&captureGraph);
+        detail::objectRelease(&filterGraph);
+    }
+
+    bool init()
+    {
+        CoInitialize(NULL);
         HRESULT hr = S_FALSE;
         // create the FilterGraph
         hr = CoCreateInstance(CLSID_FilterGraph, nullptr,
@@ -801,734 +535,152 @@ private:
         return true;
     }
 
-    static void initializeVideo(IFilterGraph2* filterGraph,
-                                ICaptureGraphBuilder2* captureGraph,
-                                FnProcessImage callback,
-                                DeviceList &devList)
-    {
-        HRESULT hr = S_FALSE;
-        for (int i = 0; i < devList.size(); i++) {
-            Device* dev = devList[i].get();
-            // add a filter for the device
-            hr = filterGraph->AddSourceFilterForMoniker(dev->moniker, nullptr, dev->filterName.c_str(),
-                                                        &dev->sourceFilter);
-            if (hr != S_OK) {
-                continue;
-            }
-            // create a samplegrabber filter for the device
-            hr = CoCreateInstance(CLSID_SampleGrabber, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_IBaseFilter, reinterpret_cast<void**>(&dev->sampleGrabberFilter));
-            if (hr < 0) {
-                continue;
-            }
+};
 
-            // set mediatype on the samplegrabber
-            hr = dev->sampleGrabberFilter->QueryInterface(IID_ISampleGrabber,
-                                                          reinterpret_cast<void**>(&dev->sampleGrabber));
-            if (hr != S_OK) {
-                continue;
-            }
+struct Property {
+    int id;
+    std::wstring vendorID;
+    std::wstring productID;
+    std::wstring friendlyName;
+    std::wstring filterName;
+};
 
-            // set device capabilities
-            updateDeviceCapabilities(captureGraph, dev);
+inline std::wstring createUniqueName(const std::wstring& name, int id)
+{
+    std::stringstream stream;
+    stream << "id" << id;
+    std::string uniquePostfix = stream.str();
+    std::wstring newName = name + std::wstring(uniquePostfix.begin(), uniquePostfix.end());
+    return newName;
+}
 
-            std::wstring filterName = L"SG" + dev->filterName;
-            filterGraph->AddFilter(dev->sampleGrabberFilter, filterName.c_str());
-
-            // add the callback to the samplegrabber, 0-->SampleCB, 1-->BufferCB
-            hr = dev->registerSampleCB(dev->getCurrentFormat().pixelFormat, callback);
-            if (hr != S_OK) {
-                continue;
-            }
-
-            // set the null renderer
-            hr = CoCreateInstance(CLSID_NullRenderer, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_IBaseFilter, reinterpret_cast<void**>(&dev->nullRenderer));
-            if (hr < 0) {
-                continue;
-            }
-
-            filterName = L"NR" + dev->filterName;
-            filterGraph->AddFilter(dev->nullRenderer, filterName.c_str());
-
-            hr = captureGraph->RenderStream(&PIN_CATEGORY_PREVIEW, &MEDIATYPE_Video,
-                                            dev->sourceFilter,
-                                            dev->sampleGrabberFilter,
-                                            dev->nullRenderer);
-            if (hr < 0) {
-                continue;
-            }
-
-            // if the stream is started, start capturing immediatly
-            LONGLONG start = 0, stop = MAXLONGLONG;
-            hr = captureGraph->ControlStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                             dev->sourceFilter, &start, &stop, 1, 2);
-            if (hr < 0) {
-                continue;
-            }
-            // reference the graph
-            dev->filterGraph = filterGraph;
-        }
-        return;
-    }
-
-    void disconnectFilters(Device* device)
-    {
-        if (!device) {
-            return;
-        }
-
-        IPin* pPin = nullptr;
-        HRESULT hr = getPin(device->sourceFilter, PINDIR_OUTPUT, &pPin);
-        if (SUCCEEDED(hr)) {
-            filterGraph->Disconnect(pPin);
-            pPin->Release();
-            pPin = nullptr;
-        }
-
-        hr = getPin(device->sampleGrabberFilter, PINDIR_INPUT, &pPin);
-        if (SUCCEEDED(hr)) {
-            filterGraph->Disconnect(pPin);
-            pPin->Release();
-            pPin = nullptr;
-        }
-
-        hr = getPin(device->sampleGrabberFilter, PINDIR_OUTPUT, &pPin);
-        if (SUCCEEDED(hr)) {
-            filterGraph->Disconnect(pPin);
-            pPin->Release();
-            pPin = nullptr;
-        }
-
-        hr = getPin(device->nullRenderer, PINDIR_INPUT, &pPin);
-        if (SUCCEEDED(hr)) {
-            filterGraph->Disconnect(pPin);
-            pPin->Release();
-            pPin = nullptr;
-        }
-
-        filterGraph->RemoveFilter(device->nullRenderer);
-        filterGraph->RemoveFilter(device->sampleGrabberFilter);
-        filterGraph->RemoveFilter(device->sourceFilter);
-    }
-
-    static bool checkMediaType(AM_MEDIA_TYPE* type)
-    {
-        if (type->majortype != MEDIATYPE_Video ||
-                type->formattype != FORMAT_VideoInfo) {
-            return false;
-        }
-
-        VIDEOINFOHEADER* pvi = reinterpret_cast<VIDEOINFOHEADER*>(type->pbFormat);
-        if (pvi->bmiHeader.biWidth <= 0 ||
-                pvi->bmiHeader.biHeight <= 0) {
-            return false;
-        }
-
-        bool isKnownFormat = false;
-        for (auto& formatRow: g_imageFormatTable) {
-            if (type->subtype == formatRow.directshowFormat) {
-                isKnownFormat = true;
-                break;
-            }
-        }
-        if (!isKnownFormat) {
-            return false;
-        }
-        return true;
-    }
-
-    static bool updateDeviceCapabilities(ICaptureGraphBuilder2* captureGraph, Device* dev)
-    {
-        HRESULT hr = S_FALSE;
-        AM_MEDIA_TYPE* pmt = nullptr;
-        VIDEO_STREAM_CONFIG_CAPS scc;
-        IAMStreamConfig* pConfig = nullptr;
-
-        hr = captureGraph->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                      dev->sourceFilter, IID_IAMStreamConfig,
-                                      reinterpret_cast<void**>(&pConfig));
-        if (hr < 0) {
-            return false;
-        }
-
-        int iCount = 0;
-        int iSize = 0;
-        hr = pConfig->GetNumberOfCapabilities(&iCount, &iSize);
-        if (hr < 0) {
-            pConfig->Release();
-            return false;
-        }
-
-        if (dev->streamConfig) {
-            dev->streamConfig->Release();
-        }
-        dev->streamConfig = pConfig;
-
-        for (int i = 0; i < iCount; ++i) {
-            hr = pConfig->GetStreamCaps(i, &pmt, reinterpret_cast<BYTE*>(&scc));
-            if (hr < 0) {
-                continue;
-            }
-
-            if (!checkMediaType(pmt)) {
-                continue;
-            }
-
-            Device::Format format;
-            VIDEOINFOHEADER* pvi = reinterpret_cast<VIDEOINFOHEADER*>(pmt->pbFormat);
-            format.mediaType = *pmt;
-            format.width = pvi->bmiHeader.biWidth;
-            format.height = pvi->bmiHeader.biHeight;
-            format.pixelFormat = pmt->subtype;
-
-            IAMVideoControl* pVideoControl = nullptr;
-            hr = captureGraph->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                             dev->sourceFilter, IID_IAMVideoControl,
-                                             reinterpret_cast<void**>(&pVideoControl));
-            if (hr < 0) {
-                continue;
-            }
-
-            IPin* pPin = nullptr;
-            hr = getPin(dev->sourceFilter, PINDIR_OUTPUT, &pPin);
-            if (hr < 0) {
-                continue;
-            }
-
-            long supportedModes;
-            hr = pVideoControl->GetCaps(pPin, &supportedModes);
-            if (hr < 0) {
-                pPin->Release();
-                pVideoControl->Release();
-                continue;
-            }
-
-            long mode;
-            hr = pVideoControl->GetMode(pPin, &mode);
-            if (hr < 0) {
-                pPin->Release();
-                pVideoControl->Release();
-                continue;
-            }
-
-            format.isFlippedHorizontal = mode & VideoControlFlag_FlipHorizontal;
-            format.isFlippedVertical = (mode & VideoControlFlag_FlipVertical) >> 1;
-
-            dev->formatList.push_back(format);
-
-            pPin->Release();
-            pVideoControl->Release();
-        }
-
-        if (!dev->formatList.empty()) {
-            dev->currentFormat = *dev->formatList.begin();
-        }
-        return true;
-    }
-
-    bool runControl()
-    {
-        HRESULT hr = mediaControl->Run();
-        if (hr < 0) {
-            return false;
-        }
-        for (auto& dev : devList) {
-            dev->stop();
-        }
-        return true;
-    }
-
-    bool stopControl()
-    {
-        for (auto& dev: devList) {
-            dev->stop();
-        }
-        HRESULT hr = mediaControl->Stop();
-        if (hr < 0) {
-            return false;
-        }
-        return true;
-    }
-
-    static HRESULT getPin(IBaseFilter* pFilter, PIN_DIRECTION PinDir, IPin** ppPin)
-    {
-        *ppPin = nullptr;
-        IEnumPins *pEnum = nullptr;
-        IPin *pPin = nullptr;
-
-        HRESULT hr = pFilter->EnumPins(&pEnum);
-        if (FAILED(hr)) {
-            return hr;
-        }
-
-        pEnum->Reset();
-        while (pEnum->Next(1, &pPin, NULL) == S_OK) {
-            PIN_DIRECTION ThisPinDir;
-            pPin->QueryDirection(&ThisPinDir);
-            if (ThisPinDir == PinDir) {
-                pEnum->Release();
-                *ppPin = pPin;
-                return S_OK;
-            }
-            pPin->Release();
-        }
-        pEnum->Release();
-        return E_FAIL;
-    }
+class Device : public Property
+{
 public:
-    explicit Manager(const std::vector<Device::Ptr> &devList_, FnProcessImage callback)
-        :filterGraph(nullptr),captureGraph(nullptr),mediaControl(nullptr),
-        m_activeDeviceNum(0),devList(devList_)
+    class Format
     {
-        CoInitialize(NULL);
-        if (initializeGraph(filterGraph, captureGraph, mediaControl)) {
-            initializeVideo(filterGraph, captureGraph, callback, devList);
-            runControl();
-        }
-    }
+    public:
+        LONG width;
+        LONG height;
+        LONG isFlippedHorizontal;
+        LONG isFlippedVertical;
+        GUID pixelFormat;
+        AM_MEDIA_TYPE mediaType;
+    public:
+        Format(): mediaType(), width(0), height(0), pixelFormat(),
+            isFlippedHorizontal(false), isFlippedVertical(false) {}
+    };
 
-    ~Manager()
-    {
-        for (auto& dev : devList) {
-            dev->stop();
-            disconnectFilters(dev.get());
-        }
-        devList.erase(devList.begin(), devList.end());
-        stopControl();
+    using Ptr = std::shared_ptr<Device>;
 
-        detail::objectRelease(&mediaControl);
-        detail::objectRelease(&captureGraph);
-        detail::objectRelease(&filterGraph);
-    }
+    static Graph graph;
+private:
+    bool isActiveValue;
+    IMoniker* moniker;
+    IBaseFilter* sourceFilter;
+    IBaseFilter* sampleGrabberFilter;
+    IBaseFilter* nullRenderer;
+    ISampleGrabber* sampleGrabber;
+    SampleGrabberCB* sampleGrabberCB;
+    IAMStreamConfig* streamConfig;
+    Device::Format currentFormat;
+    std::vector<Device::Format> formatList;
+private:
+    static HRESULT getPin(IBaseFilter* pFilter, PIN_DIRECTION PinDir, IPin** ppPin);
 
-    std::vector<std::wstring> getDeviceList() const
-    {
-        std::vector<std::wstring> names;
-        for (auto& dev: devList) {
-            names.push_back(dev->getFriendlyName());
-        }
-        return names;
-    }
+    static bool checkMediaType(AM_MEDIA_TYPE* type);
 
-    std::vector<std::string> getResolutionList() const
-    {
-        std::vector<std::string> resolutions;
-        if (m_activeDeviceNum >= devList.size()) {
-            return resolutions;
-        }
+    bool findDevice(const Property& property);
 
-        const std::vector<Device::Format> &formatList = devList[m_activeDeviceNum]->getFormatList();
-        for (const Device::Format& property: formatList) {
-            std::string formatName = "unknown";
-            for (auto& formatRow: g_imageFormatTable) {
-                if (formatRow.directshowFormat == property.pixelFormat) {
-                    formatName = formatRow.name;
-                    break;
-                }
-            }
+    bool initializeVideo(IFilterGraph2* filterGraph,
+                         ICaptureGraphBuilder2* captureGraph,
+                         const Property &property,
+                         const FnProcessImage &callback);
 
-            std::stringstream stream;
-            stream << property.width << "x" << property.height << "@" << formatName;
-            std::string resolution;
-            stream >> resolution;
-            resolutions.push_back(resolution);
-        }
-        return resolutions;
-    }
+    bool updateDeviceCapabilities(ICaptureGraphBuilder2* captureGraph);
 
-    bool onDeviceChanged(unsigned deviceNum)
-    {
-        if (!stopCapture()) {
-            return false;
-        }
-        if (deviceNum >= devList.size()) {
-            return false;
-        }
-        m_activeDeviceNum = deviceNum;
-        return true;
-    }
+    HRESULT registerSampleCB(const GUID &pixelFormat, const FnProcessImage &callbak);
 
-    bool onResolutionChanged(unsigned resolutionNum)
-    {
-        if (m_activeDeviceNum >= devList.size()) {
-            return false;
-        }
+    void disconnectFilters(IFilterGraph2* filterGraph);
 
-        stopCapture();
-        if (!stopControl()) {
-            return false;
-        }
+    bool runControl(IMediaControl* mediaControl);
 
-        auto formatList = devList[m_activeDeviceNum]->getFormatList();
-        if (resolutionNum >= formatList.size()) {
-            return false;
-        }
+    bool stopControl(IMediaControl* mediaControl);
+public:
+    Device();
+    explicit Device(const Property &property, const FnProcessImage &func);
+    ~Device();
 
-        if (!devList[m_activeDeviceNum]->setCurrentFormat(formatList[resolutionNum])) {
-            std::cout<<"setCurrentFormat failed"<<std::endl;
-            return false;
-        }
+    static int enumerate(const std::wstring &vendorID, std::vector<Property> &devList);
 
-        if (!runControl()) {
-            return false;
-        }
-        return true;
-    }
+    int getId() const {return id;}
 
-    bool startCapture()
-    {
-        if (m_activeDeviceNum >= devList.size()) {
-            return false;
-        }
-        return devList[m_activeDeviceNum]->start();
-    }
+    std::wstring getFriendlyName() const {return friendlyName;}
 
-    bool stopCapture()
-    {
-        if (m_activeDeviceNum >= devList.size()) {
-            return false;
-        }
-        return devList[m_activeDeviceNum]->stop();
-    }
+    const std::vector<Device::Format> &getFormatList() const { return formatList;}
+
+    const Device::Format &getCurrentFormat() const {return currentFormat;}
+
+    bool setCurrentFormat(const Device::Format& format);
+
+    bool isActive() const {return isActiveValue; }
+
+    bool start();
+
+    bool stop();
+
+    std::vector<std::string> getResolutionList() const;
+
+    bool onResolutionChanged(unsigned int resolutionNum);
 
     /* control parameter */
-    int setControlParam(long property, long value, long flag=CameraControl_Flags_Manual)
-    {
-        Device* device = devList[m_activeDeviceNum].get();
-        IAMCameraControl *pCameraControl = nullptr;
-        HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMCameraControl, (void**)&pCameraControl);
-        if (FAILED(hr)) {
-            return -1;
-        }
-        hr = pCameraControl->Set(property, value, flag);
-        if (FAILED(hr)) {
-            pCameraControl->Release();
-            return -2;
-        }
-        pCameraControl->Release();
-        return 0;
-    }
-
-    int getControlParam(long property, long &value, long &flag)
-    {
-        Device* device = devList[m_activeDeviceNum].get();
-        IAMCameraControl *pCameraControl = nullptr;
-        HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMCameraControl, (void**)&pCameraControl);
-        if (FAILED(hr)) {
-            return -1;
-        }
-        hr = pCameraControl->Get(property, &value, &flag);
-        if (FAILED(hr)) {
-            pCameraControl->Release();
-            return -2;
-        }
-        pCameraControl->Release();
-        return 0;
-    }
-
+    int setControlParam(long property, long value, long flag=CameraControl_Flags_Manual);
+    int getControlParam(long property, long &value, long &flag);
     int getControlParamRange(long property,
                              long &minValue, long &maxValue, long &step, long &defaultValue,
-                             long &flag)
-    {
-        Device* device = devList[m_activeDeviceNum].get();
-        IAMCameraControl *pCameraControl = nullptr;
-        HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMCameraControl, (void**)&pCameraControl);
-        if (FAILED(hr)) {
-            return -1;
-        }
-        hr = pCameraControl->GetRange(property, &minValue, &maxValue, &step, &defaultValue, &flag);
-        if (FAILED(hr)) {
-            pCameraControl->Release();
-            return -2;
-        }
-        pCameraControl->Release();
-        return 0;
-    }
+                             long &flag);
 
-    int setExposure(long value, long flag=CameraControl_Flags_Manual)
-    {
-        return setControlParam(CameraControl_Exposure, value, flag);
-    }
+    int setExposure(long value, long flag=CameraControl_Flags_Manual);
+    int getExposure(long &value, long &flag);
 
-    int getExposure(long &value, long &flag)
-    {
-        return getControlParam(CameraControl_Exposure, value, flag);
-    }
-
-    int setFocus(long value, long flag=CameraControl_Flags_Manual)
-    {
-        return setControlParam(CameraControl_Focus, value, flag);
-    }
-
-    int getFocus(long &value, long &flag)
-    {
-        return getControlParam(CameraControl_Focus, value, flag);
-    }
+    int setFocus(long value, long flag=CameraControl_Flags_Manual);
+    int getFocus(long &value, long &flag);
 
     /* video process parameter */
-    int setProcParam(long property, long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        Device* device = devList[m_activeDeviceNum].get();
-        IAMVideoProcAmp *pVideoProcAmp = NULL;
-        HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMVideoProcAmp, (void**)&pVideoProcAmp);
-        if (FAILED(hr)) {
-            return -1;
-        }
-        hr = pVideoProcAmp->Set(property, value, flag);
-        if (FAILED(hr)) {
-            pVideoProcAmp->Release();
-            return -2;
-        }
-        pVideoProcAmp->Release();
-        return 0;
-    }
-
-    int getProcParam(long property, long &value, long &flag)
-    {
-        Device* device = devList[m_activeDeviceNum].get();
-        IAMVideoProcAmp *pVideoProcAmp = NULL;
-        HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMVideoProcAmp, (void**)&pVideoProcAmp);
-        if (FAILED(hr)) {
-            return -1;
-        }
-        hr = pVideoProcAmp->Get(property, &value, &flag);
-        if (FAILED(hr)) {
-            pVideoProcAmp->Release();
-            return -2;
-        }
-        pVideoProcAmp->Release();
-        return 0;
-    }
-
+    int setProcParam(long property, long value, long flag=VideoProcAmp_Flags_Manual);
+    int getProcParam(long property, long &value, long &flag);
     int getProcParamRange(long property,
                           long &minValue, long &maxValue, long &step, long &defaultValue,
-                          long &flag)
-    {
-        Device* device = devList[m_activeDeviceNum].get();
-        IAMVideoProcAmp *pVideoProcAmp = NULL;
-        HRESULT hr = device->sourceFilter->QueryInterface(IID_IAMVideoProcAmp, (void**)&pVideoProcAmp);
-        if (FAILED(hr)) {
-            return -1;
-        }
-        hr = pVideoProcAmp->GetRange(property, &minValue, &maxValue, &step, &defaultValue, &flag);
-        if (FAILED(hr)) {
-            pVideoProcAmp->Release();
-            return -2;
-        }
-        pVideoProcAmp->Release();
-        return 0;
-    }
+                          long &flag);
+    int setBrightness(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getBrightness(long &value, long &flag);
 
-    int setBrightness(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Brightness, value, flag);
-    }
+    int setContrast(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getContrast(long &value, long &flag);
 
-    int getBrightness(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Brightness, value, flag);
-    }
+    int setHue(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getHue(long &value, long &flag);
 
-    int setContrast(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Contrast, value, flag);
-    }
+    int setSaturation(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getSaturation(long &value, long &flag);
 
-    int getContrast(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Contrast, value, flag);
-    }
+    int setSharpness(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getSharpness(long &value, long &flag);
 
-    int setHue(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Hue, value, flag);
-    }
+    int setGamma(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getGamma(long &value, long &flag);
 
-    int getHue(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Hue, value, flag);
-    }
+    int setWhiteBalance(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getWhiteBalance(long &value, long &flag);
 
-    int setSaturation(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Saturation, value, flag);
-    }
+    int setBacklightCompensation(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getBacklightCompensation(long &value, long &flag);
 
-    int getSaturation(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Saturation, value, flag);
-    }
+    int setGain(long value, long flag=VideoProcAmp_Flags_Manual);
+    int getGain(long &value, long &flag);
 
-    int setSharpness(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Sharpness, value, flag);
-    }
-
-    int getSharpness(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Sharpness, value, flag);
-    }
-
-    int setGamma(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Gamma, value, flag);
-    }
-
-    int getGamma(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Gamma, value, flag);
-    }
-
-    int setWhiteBalance(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_WhiteBalance, value, flag);
-    }
-
-    int getWhiteBalance(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_WhiteBalance, value, flag);
-    }
-
-    int setBacklightCompensation(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_BacklightCompensation, value, flag);
-    }
-
-    int getBacklightCompensation(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_BacklightCompensation, value, flag);
-    }
-
-    int setGain(long value, long flag=VideoProcAmp_Flags_Manual)
-    {
-        return setProcParam(VideoProcAmp_Gain, value, flag);
-    }
-
-    int getGain(long &value, long &flag)
-    {
-        return getProcParam(VideoProcAmp_Gain, value, flag);
-    }
-
-    void setParams(const Params &params)
-    {
-        /* brightness */
-        setBrightness(params.brightness.value, params.brightness.flag);
-        /* contrast */
-        setContrast(params.contrast.value, params.contrast.flag);
-        /* hue */
-        setHue(params.hue.value, params.hue.flag);
-        /* saturation */
-        setSaturation(params.saturation.value, params.saturation.flag);
-        /* sharpness */
-        setSharpness(params.sharpness.value, params.sharpness.flag);
-        /* gamma */
-        setGamma(params.gamma.value, params.gamma.flag);
-        /* whiteBalance */
-        setWhiteBalance(params.whiteBalance.value, params.whiteBalance.flag);
-        /* backlightCompensation */
-        setBacklightCompensation(params.backlightCompensation.value, params.backlightCompensation.flag);
-        /* gain */
-        setGain(params.gain.value, params.gain.flag);
-        /* exposure */
-        setExposure(params.exposure.value, params.exposure.flag);
-        /* focus */
-        setFocus(params.focus.value, params.focus.flag);
-        return;
-    }
-
-    void getParams(Params &params)
-    {
-        /* brightness */
-        getProcParamRange(VideoProcAmp_Brightness,
-                          params.brightness.minValue,
-                          params.brightness.maxValue,
-                          params.brightness.step,
-                          params.brightness.defaultValue,
-                          params.brightness.flag);
-        getBrightness(params.brightness.value, params.brightness.flag);
-        /* contrast */
-        getProcParamRange(VideoProcAmp_Contrast,
-                          params.contrast.minValue,
-                          params.contrast.maxValue,
-                          params.contrast.step,
-                          params.contrast.defaultValue,
-                          params.contrast.flag);
-        getContrast(params.contrast.value, params.contrast.flag);
-        /* hue */
-        getProcParamRange(VideoProcAmp_Hue,
-                          params.hue.minValue,
-                          params.hue.maxValue,
-                          params.hue.step,
-                          params.hue.defaultValue,
-                          params.hue.flag);
-        getHue(params.hue.value, params.hue.flag);
-        /* saturation */
-        getProcParamRange(VideoProcAmp_Saturation,
-                          params.saturation.minValue,
-                          params.saturation.maxValue,
-                          params.saturation.step,
-                          params.saturation.defaultValue,
-                          params.saturation.flag);
-        getSaturation(params.saturation.value, params.saturation.flag);
-        /* sharpness */
-        getProcParamRange(VideoProcAmp_Sharpness,
-                          params.sharpness.minValue,
-                          params.sharpness.maxValue,
-                          params.sharpness.step,
-                          params.sharpness.defaultValue,
-                          params.sharpness.flag);
-        getSharpness(params.sharpness.value, params.sharpness.flag);
-        /* gamma */
-        getProcParamRange(VideoProcAmp_Gamma,
-                          params.gamma.minValue,
-                          params.gamma.maxValue,
-                          params.gamma.step,
-                          params.gamma.defaultValue,
-                          params.gamma.flag);
-        getGamma(params.gamma.value, params.gamma.flag);
-        /* whiteBalance */
-        getProcParamRange(VideoProcAmp_WhiteBalance,
-                          params.whiteBalance.minValue,
-                          params.whiteBalance.maxValue,
-                          params.whiteBalance.step,
-                          params.whiteBalance.defaultValue,
-                          params.whiteBalance.flag);
-        getWhiteBalance(params.whiteBalance.value, params.whiteBalance.flag);
-        /* backlightCompensation */
-        getProcParamRange(VideoProcAmp_BacklightCompensation,
-                          params.backlightCompensation.minValue,
-                          params.backlightCompensation.maxValue,
-                          params.backlightCompensation.step,
-                          params.backlightCompensation.defaultValue,
-                          params.backlightCompensation.flag);
-        getBacklightCompensation(params.backlightCompensation.value, params.backlightCompensation.flag);
-        /* gain */
-        getProcParamRange(VideoProcAmp_Gain,
-                          params.gain.minValue,
-                          params.gain.maxValue,
-                          params.gain.step,
-                          params.gain.defaultValue,
-                          params.gain.flag);
-        getGain(params.gain.value, params.gain.flag);
-        /* exposure */
-        getControlParamRange(CameraControl_Exposure,
-                          params.exposure.minValue,
-                          params.exposure.maxValue,
-                          params.exposure.step,
-                          params.exposure.defaultValue,
-                          params.exposure.flag);
-        getExposure(params.exposure.value, params.exposure.flag);
-        /* focus */
-        getControlParamRange(CameraControl_Focus,
-                          params.focus.minValue,
-                          params.focus.maxValue,
-                          params.focus.step,
-                          params.focus.defaultValue,
-                          params.focus.flag);
-        getFocus(params.focus.value, params.focus.flag);
-        return;
-    }
+    void setParams(const Params &params);
+    void getParams(Params &params);
 };
 
 }

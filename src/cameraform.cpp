@@ -12,7 +12,7 @@ CameraForm::CameraForm(QWidget *parent) :
     isReadyForCapture(false),
     processMethod(imp::Method_None),
     ui(new Ui::CameraForm),
-    cameraManager(nullptr)
+    dev(nullptr)
 {
     ui->setupUi(this);
 
@@ -26,7 +26,7 @@ CameraForm::CameraForm(QWidget *parent) :
         }
     });
     connect(ui->settingsBtn, &QPushButton::clicked, this, [=](){
-        SettingsDialog settings(cameraManager, this);
+        SettingsDialog settings(dev, this);
         settings.exec();
     });
     ui->processComboBox->addItems(QStringList{"none", "filter"});
@@ -41,30 +41,41 @@ CameraForm::CameraForm(QWidget *parent) :
     /* HOTPLUG */
     hotplug.registerDevice(UUID_CAMERA);
     hotplug.registerNotify([=](int notifyFlag, unsigned short vid, unsigned short pid){
-        emit deviceAttached(notifyFlag == UsbHotplug::DEVICE_ATTACHED);
+        emit deviceAttached(vid, pid, notifyFlag == UsbHotplug::DEVICE_ATTACHED);
     });
-    connect(this, &CameraForm::deviceAttached, this, [=](bool isAttached){
+    connect(this, &CameraForm::deviceAttached, this, [=](unsigned short vid, unsigned short pid, bool isAttached){
+        std::size_t index = 0;
+        for (std::size_t i = 0; i < devList.size(); i++) {
+            unsigned short vid_ = Strings::hexStringToInt16(Strings::toString(devList[i].vendorID));
+            unsigned short pid_ = Strings::hexStringToInt16(Strings::toString(devList[i].productID));
+            if (vid_ == vid && pid_ == pid) {
+                index = i;
+                break;
+            }
+        }
         if (isAttached) {
-            onAddDevice();
+            onAddDevice(devList[index]);
         } else {
             onRemoveDevice();
         }
     });
     /* terminate */
     connect(Emitter::ptr(), &Emitter::terminate, this, [=](){
-        if (cameraManager != nullptr) {
-            cameraManager->stopCapture();
-        }
-        if (cameraManager != nullptr) {
-            delete cameraManager;
-            cameraManager = nullptr;
+        if (dev != nullptr) {
+            dev->stop();
+            delete dev;
+            dev = nullptr;
         }
     });
-    std::wstring vendor;
-    int count = Camera::enumerate(vendor, devList);
-    if (count > 0) {
-        onAddDevice();
+
+    if (Camera::Device::graph.init()) {
+        std::wstring vendor;
+        int count = Camera::Device::enumerate(vendor, devList);
+        if (count > 0) {
+            onAddDevice(devList[0]);
+        }
     }
+
 }
 
 CameraForm::~CameraForm()
@@ -85,12 +96,12 @@ void CameraForm::updateImage(const QImage &img)
     return;
 }
 
-void CameraForm::onAddDevice()
+void CameraForm::onAddDevice(const Camera::Property &property)
 {
     if (devList.empty()) {
         return;
     }
-    if (cameraManager != nullptr) {
+    if (dev != nullptr) {
         return;
     }
 
@@ -99,8 +110,7 @@ void CameraForm::onAddDevice()
     disconnect(ui->devComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
                this, &CameraForm::onDeviceChanged);
 
-
-    cameraManager = new Camera::Manager(devList, [this](int h, int w, int c, unsigned char* data){
+    dev = new Camera::Device(property, [this](int h, int w, int c, unsigned char* data){
         if (c == 3) {
             if (processMethod == imp::Method_None) {
                 out = cv::Mat(h, w, CV_8UC3, data);
@@ -114,11 +124,11 @@ void CameraForm::onAddDevice()
             emit sendImage(QImage(data, w, h, QImage::Format_ARGB32));
         }
     });
-    std::vector<std::wstring> devNameList = cameraManager->getDeviceList();
-    for (std::wstring& dev: devNameList) {
-        ui->devComboBox->addItem(QString::fromWCharArray(dev.c_str()));
+
+    for (const Camera::Property& dev: devList) {
+        ui->devComboBox->addItem(QString::fromWCharArray(dev.friendlyName.c_str()));
     }
-    std::vector<std::string> resList = cameraManager->getResolutionList();
+    std::vector<std::string> resList = dev->getResolutionList();
     for (std::string& res: resList) {
         ui->resolutionComboBox->addItem(QString::fromStdString(res));
     }
@@ -128,17 +138,16 @@ void CameraForm::onAddDevice()
     connect(ui->devComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &CameraForm::onDeviceChanged);
 
-    cameraManager->startCapture();
+    dev->start();
     isStreaming = true;
     return;
 }
 
 void CameraForm::onRemoveDevice()
 {
-    if (cameraManager != nullptr) {
+    if (dev != nullptr) {
         stopCapture();
-        delete cameraManager;
-        cameraManager = nullptr;
+        dev = nullptr;
     }
 
     disconnect(ui->resolutionComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -155,7 +164,7 @@ void CameraForm::onResolutionChanged(int resolutionNum)
 {
     bool wasStreaming = isStreaming;
     stopCapture();
-    bool ret = cameraManager->onResolutionChanged(resolutionNum);
+    bool ret = dev->onResolutionChanged(resolutionNum);
     if (!ret) {
         std::cout<<"onResolutionChanged failed"<<std::endl;
         return;
@@ -167,20 +176,12 @@ void CameraForm::onResolutionChanged(int resolutionNum)
 
 void CameraForm::onDeviceChanged(int deviceNum)
 {
-    bool wasStreaming = isStreaming;
-    stopCapture();
-
-    cameraManager->onDeviceChanged(deviceNum);
-
-    ui->resolutionComboBox->clear();
-    std::vector<std::string> resList = cameraManager->getResolutionList();
-    for (std::string& res : resList) {
-        ui->resolutionComboBox->addItem(QString::fromStdString(res));
+    if (dev != nullptr) {
+        dev->stop();
+        delete dev;
+        dev = nullptr;
     }
-
-    if (wasStreaming) {
-        startCapture();
-    }
+    onAddDevice(devList[deviceNum]);
     return;
 }
 
@@ -189,7 +190,7 @@ void CameraForm::startCapture()
     ui->startBtn->setEnabled(false);
     ui->stopBtn->setEnabled(true);
 
-    if (cameraManager->startCapture()) {
+    if (dev->start()) {
         isStreaming = true;
     }
     return;
@@ -199,7 +200,7 @@ void CameraForm::stopCapture()
 {
     ui->startBtn->setEnabled(true);
     ui->stopBtn->setEnabled(false);
-    if (cameraManager->stopCapture()) {
+    if (dev->stop()) {
         isStreaming = false;
     }
     return;

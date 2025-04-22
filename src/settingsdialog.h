@@ -14,7 +14,7 @@ class SettingsDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit SettingsDialog(Camera::Manager *cameraManager_, QWidget *parent = nullptr);
+    explicit SettingsDialog(Camera::Device *dev_, QWidget *parent = nullptr);
     ~SettingsDialog();
     void updateParams();
     void setParams();
@@ -45,7 +45,7 @@ public slots:
     void onFocusChanged(int value, int flag);
 private:
     Ui::SettingsDialog *ui;
-    Camera::Manager *cameraManager;
+    Camera::Device *dev;
     Camera::Params cameraParams;
 };
 

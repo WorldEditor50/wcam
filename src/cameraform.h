@@ -21,10 +21,10 @@ public:
     ~CameraForm();
 signals:
     void sendImage(const QImage &img);
-    void deviceAttached(bool isAttached);
+    void deviceAttached(unsigned short vid, unsigned short pid, bool isAttached);
 public slots:
     void updateImage(const QImage &img);
-    void onAddDevice();
+    void onAddDevice(const Camera::Property &property);
     void onRemoveDevice();
     void onResolutionChanged(int resolutionNum);
     void onDeviceChanged(int deviceNum);
@@ -37,8 +37,8 @@ private:
     cv::Mat out;
     UsbHotplug hotplug;
     Ui::CameraForm *ui;
-    Camera::DeviceList devList;
-    Camera::Manager *cameraManager;
+    std::vector<Camera::Property> devList;
+    Camera::Device *dev;
 };
 
 #endif // CAMERAFORM_H
