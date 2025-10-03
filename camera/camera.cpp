@@ -205,8 +205,8 @@ bool Camera::Device::updateDeviceCapabilities(ICaptureGraphBuilder2* captureGrap
     IAMStreamConfig* pConfig = nullptr;
 
     hr = captureGraph->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                  sourceFilter, IID_IAMStreamConfig,
-                                  reinterpret_cast<void**>(&pConfig));
+                                    sourceFilter, IID_IAMStreamConfig,
+                                    reinterpret_cast<void**>(&pConfig));
     if (hr < 0) {
         return false;
     }
@@ -337,6 +337,7 @@ void Camera::Device::disconnectFilters(IFilterGraph2* filterGraph)
     filterGraph->RemoveFilter(nullRenderer);
     filterGraph->RemoveFilter(sampleGrabberFilter);
     filterGraph->RemoveFilter(sourceFilter);
+    return;
 }
 
 bool Camera::Device::runControl(IMediaControl* mediaControl)
@@ -573,7 +574,6 @@ bool Camera::Device::stop()
 std::vector<std::string> Camera::Device::getResolutionList() const
 {
     std::vector<std::string> resolutions;
-    const std::vector<Device::Format> &formatList = getFormatList();
     for (const Device::Format& property: formatList) {
         std::string formatName = "unknown";
         for (auto& formatRow: g_imageFormatTable) {
@@ -594,13 +594,10 @@ std::vector<std::string> Camera::Device::getResolutionList() const
 
 bool Camera::Device::onResolutionChanged(unsigned int resolutionNum)
 {
-    stop();
-
     if (!stopControl(graph.mediaControl)) {
         return false;
     }
 
-    auto formatList = getFormatList();
     if (resolutionNum >= formatList.size()) {
         return false;
     }

@@ -32,16 +32,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->brightnessSpinBox->setValue(value);
         onBrightnessChanged(value, Camera::Param_Manual);
     });
-    connect(ui->brightnessSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->brightnessSpinBox, &QSpinBox::valueChanged, this, [=](int value){
          ui->brightnessSlider->setValue(value);
          onBrightnessChanged(value, Camera::Param_Manual);
     });
-    connect(ui->brightnessSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->brightnessSlider->setValue(valueInt);
-        onBrightnessChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->brightnessCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->brightnessCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->brightnessSlider->setEnabled(state == Qt::Unchecked);
         ui->brightnessSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->brightnessSlider->value();
@@ -52,16 +48,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->contrastSpinBox->setValue(value);
         onContrastChanged(value, Camera::Param_Manual);
     });
-    connect(ui->contrastSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->contrastSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->contrastSlider->setValue(value);
         onContrastChanged(value, Camera::Param_Manual);
     });
-    connect(ui->contrastSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->contrastSlider->setValue(valueInt);
-        onContrastChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->contrastCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->contrastCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->contrastSlider->setEnabled(state == Qt::Unchecked);
         ui->contrastSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->contrastSlider->value();
@@ -72,16 +64,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->hueSpinBox->setValue(value);
         onHueChanged(value, Camera::Param_Manual);
     });
-    connect(ui->hueSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->hueSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->hueSlider->setValue(value);
         onHueChanged(value, Camera::Param_Manual);
     });
-    connect(ui->hueSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->hueSlider->setValue(valueInt);
-        onHueChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->hueCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->hueCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->hueSlider->setEnabled(state == Qt::Unchecked);
         ui->hueSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->hueSlider->value();
@@ -92,16 +80,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->saturationSpinBox->setValue(value);
         onSaturationChanged(value, Camera::Param_Manual);
     });
-    connect(ui->saturationSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->saturationSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->saturationSlider->setValue(value);
         onSaturationChanged(value, Camera::Param_Manual);
     });
-    connect(ui->saturationSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->saturationSlider->setValue(valueInt);
-        onSaturationChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->saturationCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->saturationCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->saturationSlider->setEnabled(state == Qt::Unchecked);
         ui->saturationSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->saturationSlider->value();
@@ -112,16 +96,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->sharpnessSpinBox->setValue(value);
         onSharpnessChanged(value, Camera::Param_Manual);
     });
-    connect(ui->sharpnessSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->sharpnessSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->sharpnessSlider->setValue(value);
         onSharpnessChanged(value, Camera::Param_Manual);
     });
-    connect(ui->sharpnessSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->sharpnessSlider->setValue(valueInt);
-        onSharpnessChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->sharpnessCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->sharpnessCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->sharpnessSlider->setEnabled(state == Qt::Unchecked);
         ui->sharpnessSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->sharpnessSlider->value();
@@ -132,16 +112,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->gammaSpinBox->setValue(value);
         onGammaChanged(value, Camera::Param_Manual);
     });
-    connect(ui->gammaSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->gammaSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->gammaSlider->setValue(value);
         onGammaChanged(value, Camera::Param_Manual);
     });
-    connect(ui->gammaSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->gammaSlider->setValue(valueInt);
-        onGammaChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->gammaCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->gammaCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->gammaSlider->setEnabled(state == Qt::Unchecked);
         ui->gammaSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->gammaSlider->value();
@@ -152,16 +128,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->whiteBalanceSpinBox->setValue(value);
         onWhiteBalanceChanged(value, Camera::Param_Manual);
     });
-    connect(ui->whiteBalanceSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->whiteBalanceSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->whiteBalanceSlider->setValue(value);
         onWhiteBalanceChanged(value, Camera::Param_Manual);
     });
-    connect(ui->whiteBalanceSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->whiteBalanceSlider->setValue(valueInt);
-        onWhiteBalanceChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->whiteBalanceCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->whiteBalanceCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->whiteBalanceSlider->setEnabled(state == Qt::Unchecked);
         ui->whiteBalanceSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->whiteBalanceSlider->value();
@@ -172,16 +144,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->backlightCompensationSpinBox->setValue(value);
         onBacklightCompensationChanged(value, Camera::Param_Manual);
     });
-    connect(ui->backlightCompensationSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->backlightCompensationSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->backlightCompensationSlider->setValue(value);
         onBacklightCompensationChanged(value, Camera::Param_Manual);
     });
-    connect(ui->backlightCompensationSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->backlightCompensationSlider->setValue(valueInt);
-        onBacklightCompensationChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->backlightCompensationCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->backlightCompensationCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->backlightCompensationSlider->setEnabled(state == Qt::Unchecked);
         ui->backlightCompensationSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->backlightCompensationSlider->value();
@@ -192,16 +160,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->gainSpinBox->setValue(value);
         onGainChanged(value, Camera::Param_Manual);
     });
-    connect(ui->gainSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->gainSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->gainSlider->setValue(value);
         onGainChanged(value, Camera::Param_Manual);
     });
-    connect(ui->gainSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->gainSlider->setValue(valueInt);
-        onGainChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->gainCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->gainCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->gainSlider->setEnabled(state == Qt::Unchecked);
         ui->gainSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->gainSlider->value();
@@ -212,16 +176,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->exposureSpinBox->setValue(value);
         onExposureChanged(value, Camera::Param_Manual);
     });
-    connect(ui->exposureSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->exposureSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->exposureSlider->setValue(value);
         onExposureChanged(value, Camera::Param_Manual);
     });
-    connect(ui->exposureSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->exposureSlider->setValue(valueInt);
-        onExposureChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->exposureCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->exposureCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->exposureSlider->setEnabled(state == Qt::Unchecked);
         ui->exposureSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->exposureSlider->value();
@@ -232,16 +192,12 @@ SettingsDialog::SettingsDialog(Camera::Device *dev_, QWidget *parent) :
         ui->focusSpinBox->setValue(value);
         onFocusChanged(value, Camera::Param_Manual);
     });
-    connect(ui->focusSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int value){
+    connect(ui->focusSpinBox, &QSpinBox::valueChanged, this, [=](int value){
         ui->focusSlider->setValue(value);
         onFocusChanged(value, Camera::Param_Manual);
     });
-    connect(ui->focusSpinBox, QOverload<const QString&>::of(&QSpinBox::valueChanged), this, [=](const QString &value){
-        int valueInt = value.toInt();
-        ui->focusSlider->setValue(valueInt);
-        onFocusChanged(valueInt, Camera::Param_Manual);
-    });
-    connect(ui->focusCheckBox, &QCheckBox::stateChanged, this, [=](int state){
+
+    connect(ui->focusCheckBox, &QCheckBox::checkStateChanged, this, [=](Qt::CheckState state){
         ui->focusSlider->setEnabled(state == Qt::Unchecked);
         ui->focusSpinBox->setEnabled(state == Qt::Unchecked);
         int value = ui->focusSlider->value();

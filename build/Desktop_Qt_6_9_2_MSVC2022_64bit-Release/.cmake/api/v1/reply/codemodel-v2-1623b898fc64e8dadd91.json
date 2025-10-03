@@ -1,0 +1,78 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-Release-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.16"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"name" : "Release",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "wcam",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "wcam::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-wcam-Release-1c94fc0cce4c2ac50e40.json",
+					"name" : "wcam",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "wcam_autogen::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-wcam_autogen-Release-74ce9e895debce16607d.json",
+					"name" : "wcam_autogen",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "wcam_autogen_timestamp_deps::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-wcam_autogen_timestamp_deps-Release-bef93c78f7c83539b077.json",
+					"name" : "wcam_autogen_timestamp_deps",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release",
+		"source" : "E:/home/code/wcam"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

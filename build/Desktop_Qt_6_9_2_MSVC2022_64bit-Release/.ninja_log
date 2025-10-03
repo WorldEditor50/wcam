@@ -1,0 +1,20 @@
+# ninja log v6
+20	670	7800052597041128	wcam_autogen/timestamp	c7ce1b1c272ab739
+20	670	7800052597041128	wcam_autogen/mocs_compilation.cpp	c7ce1b1c272ab739
+20	670	7800052597041128	E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/wcam_autogen/timestamp	c7ce1b1c272ab739
+20	670	7800052597041128	E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/wcam_autogen/mocs_compilation.cpp	c7ce1b1c272ab739
+706	1625	7800052598272029	CMakeFiles/wcam.dir/camera/jpegwrap.cpp.obj	7e5544d0ad1f375c
+716	2733	7800052598372019	CMakeFiles/wcam.dir/improcess/improcess.cpp.obj	5c2f1cd0b806e765
+711	3227	7800052598322011	CMakeFiles/wcam.dir/camera/usbhotplug.cpp.obj	fc9fa3b1f72d34cd
+684	3799	7800052598051447	CMakeFiles/wcam.dir/src/emitter.cpp.obj	c297a4f23546c12b
+702	3915	7800052598232016	CMakeFiles/wcam.dir/camera/camera.cpp.obj	e92123a342c6b8e3
+689	4831	7800052598091516	CMakeFiles/wcam.dir/src/main.cpp.obj	d46917f66a31a8c1
+693	6824	7800052598141520	CMakeFiles/wcam.dir/src/mainwindow.cpp.obj	da132659f581a85c
+675	7300	7800052597966295	CMakeFiles/wcam.dir/wcam_autogen/mocs_compilation.cpp.obj	c7c2873349051ce0
+679	7680	7800052597996300	CMakeFiles/wcam.dir/src/cameraform.cpp.obj	1e55c9c62518d13f
+68	250	7800056532318977	wcam_autogen/timestamp	c7ce1b1c272ab739
+68	250	7800056532318977	wcam_autogen/mocs_compilation.cpp	c7ce1b1c272ab739
+68	250	7800056532318977	E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/wcam_autogen/timestamp	c7ce1b1c272ab739
+68	250	7800056532318977	E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/wcam_autogen/mocs_compilation.cpp	c7ce1b1c272ab739
+251	5313	7800056534139708	CMakeFiles/wcam.dir/src/settingsdialog.cpp.obj	6b465fa52844d7c6
+5313	5659	7800056584770159	wcam.exe	3569d5466f56c703

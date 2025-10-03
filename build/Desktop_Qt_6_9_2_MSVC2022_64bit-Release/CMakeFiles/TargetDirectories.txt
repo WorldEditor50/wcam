@@ -1,0 +1,5 @@
+E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/CMakeFiles/wcam.dir
+E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/CMakeFiles/edit_cache.dir
+E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/CMakeFiles/rebuild_cache.dir
+E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/CMakeFiles/wcam_autogen_timestamp_deps.dir
+E:/home/code/wcam/build/Desktop_Qt_6_9_2_MSVC2022_64bit-Release/CMakeFiles/wcam_autogen.dir

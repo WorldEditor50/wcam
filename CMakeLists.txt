@@ -48,14 +48,14 @@ set(LIBYUV_LIBS
     ${LIBRARIES_DIR}/libyuv/lib/yuv.lib
     ${LIBRARIES_DIR}/libjpeg/lib/jpeg-static.lib)
 # opencv
-set(OpenCV_DIR "D:/home/3rdparty/opencv48/x64/vc16/lib")
+set(OpenCV_DIR "E:/home/3rdparty/opencv48/x64/vc16/lib")
 find_package(OpenCV REQUIRED)
 if (OpenCV_FOUND)
     message("FOUND opencv")
     include_directories(${OpenCV_INCLUDE_DIRS})
 endif()
 # ncnn
-set(NCNN_DIR "D:/home/3rdparty/ncnn")
+set(NCNN_DIR "E:/home/3rdparty/ncnn")
 include_directories(${NCNN_DIR}/include)
 set(NCNN_STATIC ${NCNN_DIR}/lib/ncnn.lib -fopenmp)
 
